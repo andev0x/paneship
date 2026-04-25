@@ -1,3 +1,4 @@
+use crate::core::config::Config;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -6,6 +7,7 @@ pub struct PromptContext {
     pub width: usize,
     pub exit_code: i32,
     pub is_tmux: bool,
+    pub config: std::sync::Arc<Config>,
 }
 
 impl PromptContext {
@@ -23,14 +25,15 @@ impl PromptContext {
             });
 
         let is_tmux = std::env::var("TMUX").is_ok();
+        let config = std::sync::Arc::new(Config::load());
 
         Self {
             cwd,
             width,
             exit_code,
             is_tmux,
+            config,
         }
     }
 }
-
 // Since I added terminal_size, I should check if it is in Cargo.toml

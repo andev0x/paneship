@@ -15,16 +15,27 @@ impl Module for Git {
             fresh
         });
 
+        let config = &context.config.git;
+
         if let Some(snapshot) = snapshot {
             let mut status = Vec::new();
             if snapshot.staged > 0 {
-                status.push(format!("\x1b[32m+{}\x1b[0m", snapshot.staged));
+                status.push(format!(
+                    "\x1b[32m{}{}\x1b[0m",
+                    config.staged_icon, snapshot.staged
+                ));
             }
             if snapshot.unstaged > 0 {
-                status.push(format!("\x1b[33m!{}\x1b[0m", snapshot.unstaged));
+                status.push(format!(
+                    "\x1b[33m{}{}\x1b[0m",
+                    config.unstaged_icon, snapshot.unstaged
+                ));
             }
             if snapshot.untracked > 0 {
-                status.push(format!("\x1b[31m?{}\x1b[0m", snapshot.untracked));
+                status.push(format!(
+                    "\x1b[31m{}{}\x1b[0m",
+                    config.untracked_icon, snapshot.untracked
+                ));
             }
 
             let status_str = if status.is_empty() {
@@ -34,8 +45,8 @@ impl Module for Git {
             };
 
             format!(
-                " \x1b[35mon\x1b[0m \x1b[1;36m {}\x1b[0m{}",
-                snapshot.branch, status_str
+                " \x1b[35mon\x1b[0m \x1b[1;36m{} {}\x1b[0m{}",
+                config.branch_icon, snapshot.branch, status_str
             )
         } else {
             "".to_string()

@@ -1,0 +1,14 @@
+[directory]
+icon = ""
+truncation_length = 3
+truncate_to_repo = true
+
+[git]
+branch_icon = ""
+staged_icon = "+"
+unstaged_icon = "!"
+untracked_icon = "?"
+
+[status]
+success_icon = "➜"
+failure_icon = "➜"

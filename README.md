@@ -25,6 +25,27 @@ Comparison against Starship in a repository with 8 concurrent panes:
 cargo install --path .
 ```
 
+## Configuration
+
+Paneship can be customized using a TOML file located at `~/.config/paneship/config.toml`.
+
+```toml
+[directory]
+icon = ""
+truncation_length = 3
+truncate_to_repo = true
+
+[git]
+branch_icon = ""
+staged_icon = "+"
+unstaged_icon = "!"
+untracked_icon = "?"
+
+[status]
+success_icon = "➜"
+failure_icon = "➜"
+```
+
 ## Setup
 
 ### Zsh
