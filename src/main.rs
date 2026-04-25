@@ -1,12 +1,15 @@
 mod benchmark;
 mod cache;
 mod core;
+#[cfg(unix)]
 mod daemon;
 mod modules;
+#[cfg(unix)]
 mod tmux;
 
 use std::path::PathBuf;
 
+#[cfg(unix)]
 use benchmark::BenchmarkOptions;
 use core::prompt::PromptContext;
 
@@ -17,11 +20,19 @@ struct RenderOptions {
     cwd: Option<PathBuf>,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone)]
 enum CliCommand {
     Render(RenderOptions),
     Benchmark(BenchmarkOptions),
     Daemon,
+    Help,
+}
+
+#[cfg(not(unix))]
+#[derive(Debug, Clone)]
+enum CliCommand {
+    Render(RenderOptions),
     Help,
 }
 
@@ -41,6 +52,7 @@ fn main() {
             let prompt = core::renderer::render(&context);
             print!("{prompt}");
         }
+        #[cfg(unix)]
         CliCommand::Benchmark(options) => match benchmark::run(options) {
             Ok(report) => {
                 println!("{report}");
@@ -50,6 +62,7 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        #[cfg(unix)]
         CliCommand::Daemon => {
             if let Err(err) = daemon::run() {
                 eprintln!("daemon error: {err}");
@@ -76,9 +89,13 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
     }
 
     if args[0] == "benchmark" {
+        #[cfg(unix)]
         return parse_benchmark_args(&args[1..]);
+        #[cfg(not(unix))]
+        return Err("benchmark command is only available on Unix".to_string());
     }
 
+    #[cfg(unix)]
     if args[0] == "daemon" {
         return Ok(CliCommand::Daemon);
     }
