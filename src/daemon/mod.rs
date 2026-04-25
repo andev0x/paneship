@@ -19,7 +19,7 @@ pub enum Response {
 }
 
 pub fn get_socket_path() -> PathBuf {
-    let uid = unsafe { libc::getuid() };
+    let uid = std::process::id();
     std::env::temp_dir().join(format!("paneship-{}.sock", uid))
 }
 
