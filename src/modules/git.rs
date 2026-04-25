@@ -7,6 +7,7 @@ pub struct Git;
 
 impl Module for Git {
     fn render(&self, context: &PromptContext) -> String {
+        #[cfg(unix)]
         let snapshot = crate::daemon::query_git(&context.cwd).or_else(|| {
             let fresh = get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd));
             if let Some(ref s) = fresh {
@@ -14,6 +15,9 @@ impl Module for Git {
             }
             fresh
         });
+
+        #[cfg(not(unix))]
+        let snapshot = get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd));
 
         let config = &context.config.git;
 

@@ -154,8 +154,9 @@ fn parse_render_args(args: &[String]) -> Result<CliCommand, String> {
     Ok(CliCommand::Render(options))
 }
 
+#[cfg(unix)]
 fn parse_benchmark_args(args: &[String]) -> Result<CliCommand, String> {
-    let mut options = BenchmarkOptions::default();
+    let mut options = crate::benchmark::BenchmarkOptions::default();
     let mut idx = 0;
 
     while idx < args.len() {

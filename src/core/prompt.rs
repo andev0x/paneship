@@ -15,6 +15,7 @@ impl PromptContext {
         let cwd =
             cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
+        #[cfg(unix)]
         let width = width
             .or_else(crate::tmux::get_pane_width)
             .unwrap_or_else(|| {
@@ -23,6 +24,13 @@ impl PromptContext {
                     .map(|(w, _)| w.0 as usize)
                     .unwrap_or(80)
             });
+
+        #[cfg(not(unix))]
+        let width = width.unwrap_or_else(|| {
+            terminal_size::terminal_size()
+                .map(|(w, _)| w.0 as usize)
+                .unwrap_or(80)
+        });
 
         let is_tmux = std::env::var("TMUX").is_ok();
         let config = std::sync::Arc::new(Config::load());
