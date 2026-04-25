@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
 use crate::core::prompt::PromptContext;
 use crate::core::renderer;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct BenchmarkOptions {
@@ -69,7 +69,7 @@ pub fn run(options: BenchmarkOptions) -> Result<BenchmarkReport, String> {
 
     let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
     let _duration = start.elapsed();
-    
+
     // Average of averages
     let paneship_avg = results.iter().sum::<Duration>() / results.len() as u32;
 
@@ -87,9 +87,12 @@ pub fn run(options: BenchmarkOptions) -> Result<BenchmarkReport, String> {
 
 fn benchmark_starship(options: &BenchmarkOptions) -> Result<Duration, String> {
     use std::process::Command;
-    
-    let cwd = options.cwd.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
-    
+
+    let cwd = options
+        .cwd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap());
+
     // Warm up
     for _ in 0..5 {
         let _ = Command::new("starship")
@@ -109,7 +112,7 @@ fn benchmark_starship(options: &BenchmarkOptions) -> Result<Duration, String> {
             .current_dir(&cwd)
             .output()
             .map_err(|e| format!("failed to execute starship: {e}"))?;
-            
+
         if !output.status.success() {
             return Err("starship execution failed".to_string());
         }

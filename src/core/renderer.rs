@@ -5,11 +5,7 @@ use crate::modules::status::Status;
 use crate::modules::Module;
 
 pub fn render(context: &PromptContext) -> String {
-    let modules: Vec<Box<dyn Module>> = vec![
-        Box::new(Directory),
-        Box::new(Git),
-        Box::new(Status),
-    ];
+    let modules: Vec<Box<dyn Module>> = vec![Box::new(Directory), Box::new(Git), Box::new(Status)];
 
     let mut output = String::new();
     for (i, module) in modules.iter().enumerate() {

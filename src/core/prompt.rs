@@ -10,10 +10,9 @@ pub struct PromptContext {
 
 impl PromptContext {
     pub fn from_inputs(cwd: Option<PathBuf>, width: Option<usize>, exit_code: i32) -> Self {
-        let cwd = cwd.unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
-        
+        let cwd =
+            cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
         let width = width
             .or_else(crate::tmux::get_pane_width)
             .unwrap_or_else(|| {

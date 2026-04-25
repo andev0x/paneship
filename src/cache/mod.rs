@@ -14,8 +14,7 @@ pub struct GitSnapshot {
     pub untracked: usize,
 }
 
-impl GitSnapshot {
-}
+impl GitSnapshot {}
 
 #[derive(Debug, Clone)]
 struct GitCacheEntry {
