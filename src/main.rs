@@ -1,6 +1,7 @@
 mod benchmark;
 mod cache;
 mod core;
+mod daemon;
 mod modules;
 mod tmux;
 
@@ -20,6 +21,7 @@ struct RenderOptions {
 enum CliCommand {
     Render(RenderOptions),
     Benchmark(BenchmarkOptions),
+    Daemon,
     Help,
 }
 
@@ -48,6 +50,12 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        CliCommand::Daemon => {
+            if let Err(err) = daemon::run() {
+                eprintln!("daemon error: {err}");
+                std::process::exit(1);
+            }
+        }
         CliCommand::Help => {
             println!("{}", usage());
         }
@@ -69,6 +77,14 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
 
     if args[0] == "benchmark" {
         return parse_benchmark_args(&args[1..]);
+    }
+
+    if args[0] == "daemon" {
+        return Ok(CliCommand::Daemon);
+    }
+
+    if args[0] == "render" {
+        return parse_render_args(&args[1..]);
     }
 
     parse_render_args(&args)
@@ -193,5 +209,5 @@ fn parse_benchmark_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [--exit-code <code>] [--width <cols>] [--cwd <path>]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
 }

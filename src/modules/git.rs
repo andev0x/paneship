@@ -7,19 +7,43 @@ pub struct Git;
 
 impl Module for Git {
     fn render(&self, context: &PromptContext) -> String {
-        let snapshot = get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd));
+        let snapshot = crate::daemon::query_git(&context.cwd).or_else(|| {
+            let fresh = get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd));
+            if let Some(ref s) = fresh {
+                crate::daemon::notify_git(&context.cwd, s.clone());
+            }
+            fresh
+        });
 
         if let Some(snapshot) = snapshot {
-            let branch = &snapshot.branch;
-            let dirty = if snapshot.is_dirty() { "*" } else { "" };
-            format!(" \x1b[35mon\x1b[0m \x1b[1;36m {}\x1b[0m{}", branch, dirty)
+            let mut status = Vec::new();
+            if snapshot.staged > 0 {
+                status.push(format!("\x1b[32m+{}\x1b[0m", snapshot.staged));
+            }
+            if snapshot.unstaged > 0 {
+                status.push(format!("\x1b[33m!{}\x1b[0m", snapshot.unstaged));
+            }
+            if snapshot.untracked > 0 {
+                status.push(format!("\x1b[31m?{}\x1b[0m", snapshot.untracked));
+            }
+
+            let status_str = if status.is_empty() {
+                "".to_string()
+            } else {
+                format!(" [{}]", status.join(" "))
+            };
+
+            format!(
+                " \x1b[35mon\x1b[0m \x1b[1;36m {}\x1b[0m{}",
+                snapshot.branch, status_str
+            )
         } else {
             "".to_string()
         }
     }
 }
 
-fn compute_git_status(path: &Path) -> Option<GitSnapshot> {
+pub fn compute_git_status(path: &Path) -> Option<GitSnapshot> {
     let repo = gix::discover(path).ok()?;
     let head = repo.head().ok()?;
     let branch = head
@@ -35,18 +59,38 @@ fn compute_git_status(path: &Path) -> Option<GitSnapshot> {
                 .unwrap_or_else(|| "unknown".to_string())
         });
 
-    // Simplest dirty check for now
-    let is_dirty = repo
-        .status(gix::progress::Discard)
-        .ok()
-        .and_then(|s| s.into_index_worktree_iter(None).ok())
-        .map(|mut iter| iter.next().is_some())
-        .unwrap_or(false);
-    
+    let mut staged = 0;
+    let mut unstaged = 0;
+    let mut untracked = 0;
+
+    if let Ok(status) = repo.status(gix::progress::Discard) {
+        if let Ok(iter) = status.into_iter([]) {
+            for item in iter.flatten() {
+                use gix::status::Item;
+                match item {
+                    Item::TreeIndex(_change) => {
+                        staged += 1;
+                    }
+                    Item::IndexWorktree(wt_item) => {
+                        use gix::status::index_worktree::Item as WtItem;
+                        match wt_item {
+                            WtItem::DirectoryContents { .. } => {
+                                untracked += 1;
+                            }
+                            _ => {
+                                unstaged += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Some(GitSnapshot {
         branch,
-        staged: if is_dirty { 1 } else { 0 },
-        unstaged: 0,
-        untracked: 0,
+        staged,
+        unstaged,
+        untracked,
     })
 }

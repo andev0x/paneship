@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -5,7 +6,7 @@ use std::time::{Duration, Instant};
 
 const GIT_CACHE_TTL: Duration = Duration::from_millis(350);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitSnapshot {
     pub branch: String,
     pub staged: usize,
@@ -14,9 +15,6 @@ pub struct GitSnapshot {
 }
 
 impl GitSnapshot {
-    pub fn is_dirty(&self) -> bool {
-        self.staged > 0 || self.unstaged > 0 || self.untracked > 0
-    }
 }
 
 #[derive(Debug, Clone)]
