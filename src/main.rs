@@ -19,6 +19,13 @@ struct RenderOptions {
     width: Option<usize>,
     cwd: Option<PathBuf>,
     duration_ms: Option<u64>,
+    shell: RenderShell,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderShell {
+    Plain,
+    Zsh,
 }
 
 #[cfg(unix)]
@@ -63,7 +70,10 @@ fn main() {
                 options.exit_code,
                 options.duration_ms,
             );
-            let prompt = core::renderer::render(&context);
+            let mut prompt = core::renderer::render(&context);
+            if matches!(options.shell, RenderShell::Zsh) {
+                prompt = core::layout::wrap_ansi_for_zsh(prompt.as_str());
+            }
             print!("{prompt}");
         }
         #[cfg(unix)]
@@ -108,6 +118,7 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
             width: None,
             cwd: None,
             duration_ms: None,
+            shell: RenderShell::Plain,
         }));
     }
 
@@ -164,8 +175,13 @@ fn handle_init(options: InitOptions) {
 #[cfg(unix)]
 fn zsh_init_script() -> String {
     [
-        "if ! paneship daemon ping > /dev/null 2>&1; then",
-        "    paneship daemon > /dev/null 2>&1 &!",
+        "if (( ! $+commands[paneship] )); then",
+        "    return 0 2>/dev/null || true",
+        "fi",
+        "typeset -g PANESHIP_BIN=\"${commands[paneship]}\"",
+        "",
+        "if ! \"$PANESHIP_BIN\" daemon ping > /dev/null 2>&1; then",
+        "    \"$PANESHIP_BIN\" daemon > /dev/null 2>&1 &!",
         "fi",
         "",
         "zmodload zsh/datetime",
@@ -182,13 +198,19 @@ fn zsh_init_script() -> String {
         "    if (( PANESHIP_CMD_START > 0 )); then",
         "        local -F now=$EPOCHREALTIME",
         "        local -F elapsed=$(( now - PANESHIP_CMD_START ))",
-        "        local elapsed_ms=$(( elapsed * 1000 ))",
+        "        local -i elapsed_ms=$(( elapsed * 1000 ))",
         "        if (( elapsed_ms < 0 )); then",
         "            elapsed_ms=0",
         "        fi",
         "        duration_arg=(--duration-ms \"$elapsed_ms\")",
         "    fi",
-        "    PROMPT=\"$(paneship render --exit-code \"$exit_code\" --width \"${COLUMNS:-80}\" --cwd \"$PWD\" \"${duration_arg[@]}\")\"",
+        "    local rendered",
+        "    rendered=\"$(\"$PANESHIP_BIN\" render --shell zsh --exit-code \"$exit_code\" --width \"${COLUMNS:-80}\" --cwd \"$PWD\" \"${duration_arg[@]}\" 2>/dev/null)\" || rendered=\"\"",
+        "    if [[ -z \"$rendered\" || \"$rendered\" != *$'\\n'* || \"$rendered\" == *$'\\n'*$'\\n'* ]]; then",
+        "        PROMPT='%n@%m:%~ %# '",
+        "    else",
+        "        PROMPT=\"$rendered\"",
+        "    fi",
         "    PANESHIP_CMD_START=0",
         "}",
         "",
@@ -213,10 +235,36 @@ fn append_zsh_onboarding(script: &str) -> Result<(), String> {
     let block = format!("{start_marker}\n{script}\n{end_marker}\n");
 
     let existing = std::fs::read_to_string(&zshrc_path).unwrap_or_default();
-    if existing.contains(start_marker)
-        || existing.contains("paneship render --exit-code $? --width $COLUMNS")
-        || existing.contains("paneship daemon ping")
-    {
+    if let Some(start_idx) = existing.find(start_marker) {
+        let Some(rel_end_idx) = existing[start_idx..].find(end_marker) else {
+            return Err(format!(
+                "Found '{start_marker}' without matching '{end_marker}' in {zshrc_path}. Please fix this block manually."
+            ));
+        };
+
+        let end_marker_idx = start_idx + rel_end_idx;
+        let mut replace_end = end_marker_idx + end_marker.len();
+        if existing[replace_end..].starts_with('\n') {
+            replace_end += 1;
+        }
+
+        let mut updated = existing.clone();
+        updated.replace_range(start_idx..replace_end, block.as_str());
+
+        if updated == existing {
+            println!("Paneship onboarding is already up to date in {zshrc_path}");
+            return Ok(());
+        }
+
+        std::fs::write(&zshrc_path, updated)
+            .map_err(|err| format!("Failed to write to {zshrc_path}: {err}"))?;
+
+        println!("Paneship onboarding config updated in {zshrc_path}");
+        println!("Restart your shell or run: source {zshrc_path}");
+        return Ok(());
+    }
+
+    if existing.contains(block.trim_end()) {
         println!("Paneship onboarding is already configured in {zshrc_path}");
         return Ok(());
     }
@@ -245,6 +293,7 @@ fn parse_render_args(args: &[String]) -> Result<CliCommand, String> {
         width: None,
         cwd: None,
         duration_ms: None,
+        shell: RenderShell::Plain,
     };
 
     let mut idx = 0;
@@ -287,6 +336,22 @@ fn parse_render_args(args: &[String]) -> Result<CliCommand, String> {
                         .parse::<u64>()
                         .map_err(|_| format!("invalid duration ms: {value}"))?,
                 );
+            }
+            "-h" | "--help" => {}
+            "--shell" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "missing value for --shell".to_string())?;
+                options.shell = match value.as_str() {
+                    "zsh" => RenderShell::Zsh,
+                    "plain" => RenderShell::Plain,
+                    _ => {
+                        return Err(format!(
+                            "invalid shell value: {value}. Supported values: plain, zsh"
+                        ))
+                    }
+                };
             }
             unknown => {
                 return Err(format!("unknown render argument: {unknown}"));
@@ -411,5 +476,5 @@ fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>]\n  paneship init zsh [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon [ping]\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n\nINIT OPTIONS:\n  paneship init zsh         Print zsh init script (for eval)\n  paneship init zsh to onboarding\n                            Append paneship block to ~/.zshrc\n  paneship init zsh --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <plain|zsh>]\n  paneship init zsh [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon [ping]\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode: plain or zsh\n\nINIT OPTIONS:\n  paneship init zsh         Print zsh init script (for eval)\n  paneship init zsh to onboarding\n                            Append paneship block to ~/.zshrc\n  paneship init zsh --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
 }

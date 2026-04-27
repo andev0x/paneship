@@ -52,6 +52,78 @@ pub fn strip_ansi(input: &str) -> String {
     output
 }
 
+pub fn wrap_ansi_for_zsh(input: &str) -> String {
+    let mut output = String::with_capacity(input.len() + 16);
+    let chars: Vec<char> = input.chars().collect();
+    let mut idx = 0;
+
+    while idx < chars.len() {
+        if chars[idx] == '\u{1b}' {
+            let start = idx;
+            idx += 1;
+            if idx >= chars.len() {
+                break;
+            }
+
+            match chars[idx] {
+                '[' => {
+                    idx += 1;
+                    while idx < chars.len() {
+                        let ch = chars[idx];
+                        idx += 1;
+                        if ('@'..='~').contains(&ch) {
+                            break;
+                        }
+                    }
+
+                    let sequence: String = chars[start..idx].iter().collect();
+                    output.push_str("%{");
+                    output.push_str(sequence.as_str());
+                    output.push_str("%}");
+                    continue;
+                }
+                ']' => {
+                    idx += 1;
+                    while idx < chars.len() {
+                        let ch = chars[idx];
+                        idx += 1;
+                        if ch == '\u{7}' {
+                            break;
+                        }
+                        if ch == '\u{1b}' && idx < chars.len() && chars[idx] == '\\' {
+                            idx += 1;
+                            break;
+                        }
+                    }
+
+                    let sequence: String = chars[start..idx].iter().collect();
+                    output.push_str("%{");
+                    output.push_str(sequence.as_str());
+                    output.push_str("%}");
+                    continue;
+                }
+                _ => {
+                    let sequence: String = chars[start..idx + 1].iter().collect();
+                    output.push_str("%{");
+                    output.push_str(sequence.as_str());
+                    output.push_str("%}");
+                    idx += 1;
+                    continue;
+                }
+            }
+        }
+
+        if chars[idx] == '%' {
+            output.push_str("%%");
+        } else {
+            output.push(chars[idx]);
+        }
+        idx += 1;
+    }
+
+    output
+}
+
 pub fn visible_width(input: &str) -> usize {
     UnicodeWidthStr::width(strip_ansi(input).as_str())
 }
