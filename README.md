@@ -284,45 +284,7 @@ cargo run --release -- benchmark --iterations 200 --panes 4
 
 ## Contributing
 
-Contributions are welcome! We follow a standard open-source workflow:
-
-1. **Fork** the repository on GitHub
-2. **Clone** your fork locally:
-   ```bash
-   git clone https://github.com/YOUR-USERNAME/paneship.git
-   cd paneship
-   ```
-3. **Create a feature branch**:
-   ```bash
-   git checkout -b feature/my-improvement
-   ```
-4. **Make your changes** and ensure they pass:
-   ```bash
-   cargo fmt
-   cargo clippy -- -D warnings
-   cargo test
-   ```
-5. **Commit** with clear messages:
-   ```bash
-   git commit -m "feat: add support for Nix shells"
-   ```
-6. **Push** to your fork and **open a pull request**
-
-### Reporting Issues
-
-Found a bug or have an idea? Please open an issue on [GitHub Issues](https://github.com/andev0x/paneship/issues) with:
-
-- Clear title and description
-- Steps to reproduce (if applicable)
-- Environment details (OS, shell, Rust version)
-- Expected vs. actual behavior
-
-### Code Style
-
-- Follow Rust conventions (enforced by `rustfmt`)
-- Avoid unsafe code unless absolutely necessary (with comments explaining why)
-- Write tests for new features
-- Update this README if adding user-facing functionality
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started, report bugs, and submit pull requests.
 
 ## Roadmap
 
