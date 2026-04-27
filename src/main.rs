@@ -23,6 +23,7 @@ struct RenderOptions {
 #[cfg(unix)]
 #[derive(Debug, Clone)]
 enum CliCommand {
+    Init(InitOptions),
     Render(RenderOptions),
     Benchmark(BenchmarkOptions),
     Daemon,
@@ -34,6 +35,12 @@ enum CliCommand {
 enum CliCommand {
     Render(RenderOptions),
     Help,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+enum InitOptions {
+    Zsh { onboarding: bool },
 }
 
 fn main() {
@@ -69,6 +76,10 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        #[cfg(unix)]
+        CliCommand::Init(options) => {
+            handle_init(options);
+        }
         CliCommand::Help => {
             println!("{}", usage());
         }
@@ -90,9 +101,13 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
 
     if args[0] == "benchmark" {
         #[cfg(unix)]
-        return parse_benchmark_args(&args[1..]);
+        {
+            return parse_benchmark_args(&args[1..]);
+        }
         #[cfg(not(unix))]
-        return Err("benchmark command is only available on Unix".to_string());
+        {
+            return Err("benchmark command is only available on Unix".to_string());
+        }
     }
 
     #[cfg(unix)]
@@ -100,11 +115,85 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
         return Ok(CliCommand::Daemon);
     }
 
+    #[cfg(unix)]
+    if args[0] == "init" {
+        return parse_init_args(&args[1..]);
+    }
+
     if args[0] == "render" {
         return parse_render_args(&args[1..]);
     }
 
     parse_render_args(&args)
+}
+
+#[cfg(unix)]
+fn handle_init(options: InitOptions) {
+    match options {
+        InitOptions::Zsh { onboarding } => {
+            let script = zsh_init_script();
+            if onboarding {
+                if let Err(err) = append_zsh_onboarding(&script) {
+                    eprintln!("{err}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+
+            print!("{script}");
+        }
+    }
+}
+
+#[cfg(unix)]
+fn zsh_init_script() -> String {
+    [
+        "if ! pgrep -x \"paneship\" > /dev/null; then",
+        "    paneship daemon > /dev/null 2>&1 &",
+        "    disown",
+        "fi",
+        "",
+        "PROMPT='$(paneship render --exit-code $? --width $COLUMNS)'",
+    ]
+    .join("\n")
+}
+
+#[cfg(unix)]
+fn append_zsh_onboarding(script: &str) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let home = std::env::var("HOME").map_err(|_| "Unable to find $HOME".to_string())?;
+    let zshrc_path = format!("{home}/.zshrc");
+
+    let start_marker = "# >>> paneship initialize >>>";
+    let end_marker = "# <<< paneship initialize <<<";
+    let block = format!("{start_marker}\n{script}\n{end_marker}\n");
+
+    let existing = std::fs::read_to_string(&zshrc_path).unwrap_or_default();
+    if existing.contains(start_marker)
+        || existing.contains("paneship render --exit-code $? --width $COLUMNS")
+    {
+        println!("Paneship onboarding is already configured in {zshrc_path}");
+        return Ok(());
+    }
+
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&zshrc_path)
+        .map_err(|err| format!("Failed to open {zshrc_path}: {err}"))?;
+
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file).map_err(|err| format!("Failed to write to {zshrc_path}: {err}"))?;
+    }
+
+    write!(file, "{block}").map_err(|err| format!("Failed to write to {zshrc_path}: {err}"))?;
+
+    println!("Paneship onboarding config appended to {zshrc_path}");
+    println!("Restart your shell or run: source {zshrc_path}");
+
+    Ok(())
 }
 
 fn parse_render_args(args: &[String]) -> Result<CliCommand, String> {
@@ -226,6 +315,34 @@ fn parse_benchmark_args(args: &[String]) -> Result<CliCommand, String> {
     Ok(CliCommand::Benchmark(options))
 }
 
+#[cfg(unix)]
+fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
+    if args.is_empty() {
+        return Err("missing init target. Try: paneship init zsh".to_string());
+    }
+
+    if args[0] != "zsh" {
+        return Err(format!(
+            "unsupported init target '{}'. Currently only 'zsh' is supported.",
+            args[0]
+        ));
+    }
+
+    let onboarding = match args.get(1).map(|v| v.as_str()) {
+        None => false,
+        Some("--onboarding") => true,
+        Some("to") if args.get(2).map(|v| v.as_str()) == Some("onboarding") && args.len() == 3 => {
+            true
+        }
+        Some("onboarding") if args.len() == 2 => true,
+        Some(_) => {
+            return Err("unsupported init syntax. Use: paneship init zsh [--onboarding|to onboarding]".to_string())
+        }
+    };
+
+    Ok(CliCommand::Init(InitOptions::Zsh { onboarding }))
+}
+
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>]\n  paneship init zsh [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n\nINIT OPTIONS:\n  paneship init zsh         Print zsh init script (for eval)\n  paneship init zsh to onboarding\n                            Append paneship block to ~/.zshrc\n  paneship init zsh --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
 }

@@ -2,6 +2,15 @@
 name = "paneship"
 version = "0.3.0"
 edition = "2021"
+authors = ["Paneship contributors"]
+description = "A blazingly fast, high-performance shell prompt optimized for tmux and large Git repositories"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/anomalyco/paneship"
+homepage = "https://github.com/anomalyco/paneship"
+documentation = "https://docs.rs/paneship"
+keywords = ["prompt", "shell", "tmux", "git", "performance"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 gix = "0.70"

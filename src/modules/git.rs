@@ -1,60 +1,113 @@
 use crate::cache::{get_or_compute_git, GitSnapshot};
+use crate::core::layout::truncate_plain_to_width;
 use crate::core::prompt::PromptContext;
-use crate::modules::Module;
 use std::path::Path;
+use unicode_width::UnicodeWidthStr;
 
-pub struct Git;
+pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) -> String {
+    if max_visible_width == 0 {
+        return String::new();
+    }
 
-impl Module for Git {
-    fn render(&self, context: &PromptContext) -> String {
-        #[cfg(unix)]
-        let snapshot = crate::daemon::query_git(&context.cwd).or_else(|| {
+    let snapshot = snapshot_for_context(context);
+    let Some(snapshot) = snapshot else {
+        return String::new();
+    };
+
+    let config = &context.config.git;
+
+    let mut status_tokens = status_tokens(&snapshot, config);
+
+    loop {
+        let status_plain = status_tokens
+            .iter()
+            .map(|(plain, _)| plain.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let status_width = if status_plain.is_empty() {
+            0
+        } else {
+            1 + UnicodeWidthStr::width(status_plain.as_str())
+        };
+
+        let icon_with_space = format!("{} ", config.branch_icon);
+        let icon_width = UnicodeWidthStr::width(icon_with_space.as_str());
+        let branch_budget = max_visible_width
+            .saturating_sub(icon_width + status_width)
+            .max(1);
+
+        let branch = if UnicodeWidthStr::width(snapshot.branch.as_str()) > branch_budget {
+            truncate_plain_to_width(snapshot.branch.as_str(), branch_budget)
+        } else {
+            snapshot.branch.clone()
+        };
+
+        let mut out = format!("\x1b[1;36m{} {}\x1b[0m", config.branch_icon, branch);
+        if !status_tokens.is_empty() {
+            out.push(' ');
+            out.push_str(
+                &status_tokens
+                    .iter()
+                    .map(|(_, styled)| styled.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            );
+        }
+
+        if crate::core::layout::visible_width(out.as_str()) <= max_visible_width {
+            return out;
+        }
+
+        if status_tokens.is_empty() {
+            let plain = crate::core::layout::strip_ansi(out.as_str());
+            return format!(
+                "\x1b[1;36m{}\x1b[0m",
+                truncate_plain_to_width(plain.as_str(), max_visible_width)
+            );
+        }
+
+        status_tokens.pop();
+    }
+}
+
+fn status_tokens(snapshot: &GitSnapshot, config: &crate::core::config::GitConfig) -> Vec<(String, String)> {
+    let mut status = Vec::new();
+
+    if snapshot.staged > 0 {
+        let plain = format!("{}{}", config.staged_icon, snapshot.staged);
+        let styled = format!("\x1b[32m{}\x1b[0m", plain);
+        status.push((plain, styled));
+    }
+    if snapshot.unstaged > 0 {
+        let plain = format!("{}{}", config.unstaged_icon, snapshot.unstaged);
+        let styled = format!("\x1b[33m{}\x1b[0m", plain);
+        status.push((plain, styled));
+    }
+    if snapshot.untracked > 0 {
+        let plain = format!("{}{}", config.untracked_icon, snapshot.untracked);
+        let styled = format!("\x1b[31m{}\x1b[0m", plain);
+        status.push((plain, styled));
+    }
+
+    status
+}
+
+fn snapshot_for_context(context: &PromptContext) -> Option<GitSnapshot> {
+    #[cfg(unix)]
+    {
+        crate::daemon::query_git(&context.cwd).or_else(|| {
             let fresh = get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd));
             if let Some(ref s) = fresh {
                 crate::daemon::notify_git(&context.cwd, s.clone());
             }
             fresh
-        });
+        })
+    }
 
-        #[cfg(not(unix))]
-        let snapshot = get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd));
-
-        let config = &context.config.git;
-
-        if let Some(snapshot) = snapshot {
-            let mut status = Vec::new();
-            if snapshot.staged > 0 {
-                status.push(format!(
-                    "\x1b[32m{}{}\x1b[0m",
-                    config.staged_icon, snapshot.staged
-                ));
-            }
-            if snapshot.unstaged > 0 {
-                status.push(format!(
-                    "\x1b[33m{}{}\x1b[0m",
-                    config.unstaged_icon, snapshot.unstaged
-                ));
-            }
-            if snapshot.untracked > 0 {
-                status.push(format!(
-                    "\x1b[31m{}{}\x1b[0m",
-                    config.untracked_icon, snapshot.untracked
-                ));
-            }
-
-            let status_str = if status.is_empty() {
-                "".to_string()
-            } else {
-                format!(" [{}]", status.join(" "))
-            };
-
-            format!(
-                " \x1b[35mon\x1b[0m \x1b[1;36m{} {}\x1b[0m{}",
-                config.branch_icon, snapshot.branch, status_str
-            )
-        } else {
-            "".to_string()
-        }
+    #[cfg(not(unix))]
+    {
+        get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd))
     }
 }
 
