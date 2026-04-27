@@ -1,19 +1,26 @@
 # Paneship
-
-[![Crates.io](https://img.shields.io/crates/v/paneship.svg)](https://crates.io/crates/paneship)
-[![docs.rs](https://docs.rs/paneship/badge.svg)](https://docs.rs/paneship)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub](https://img.shields.io/badge/GitHub-anomalyco/paneship-blue)](https://github.com/anomalyco/paneship)
+[![Crates.io](https://img.shields.io/crates/v/paneship?style=flat-square)](https://crates.io/crates/paneship)
+[![Docs.rs](https://img.shields.io/docsrs/paneship?style=flat-square)](https://docs.rs/paneship)
+[![License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](https://opensource.org/licenses/MIT)
+[![GitHub](https://img.shields.io/badge/github-andev0x/paneship-blue?style=flat-square)](https://github.com/andev0x/paneship)
+[![CI](https://img.shields.io/github/actions/workflow/status/andev0x/paneship/ci.yml?branch=main&style=flat-square)](https://github.com/andev0x/paneship/actions)
+[![Stars](https://img.shields.io/github/stars/andev0x/paneship?style=flat-square&color=F9E2AF)](https://github.com/andev0x/paneship/stargazers)
+[![Downloads](https://img.shields.io/github/downloads/andev0x/paneship/total?style=flat-square&color=89B4FA)](https://github.com/andev0x/paneship/releases)
 
 A high-performance shell prompt written in Rust, optimized for tmux environments, large Git repositories, and developers who value speed and clarity.
 
+## Demo
+<div align="center">
+  <img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/paneship.png" width="80%" alt="Paneship" />
+</div>
+
 ## Overview
 
-**Paneship** is a fast, modern shell prompt that displays essential workspace information at a glance. With intelligent caching, language detection, and responsive layout adaptation, it renders in ~5.7ms on average—enabling snappy shell interactions without sacrificing functionality.
+**Paneship** is a fast, modern shell prompt that displays essential workspace information at a glance. With intelligent caching, language detection, and responsive layout adaptation, it renders in ~4.7ms on average—enabling snappy shell interactions without sacrificing functionality.
 
 ### Key Metrics
 
-- **Average render time**: ~5.7ms per prompt
+- **Average render time**: ~4.7ms per prompt
 - **Performance**: ~4x faster than comparable alternatives
 - **Daemon-backed caching**: Zero-lag cross-pane data sharing
 - **Language support**: Rust, Node.js, Python, Go, Ruby, PHP, Java, and more
@@ -21,7 +28,7 @@ A high-performance shell prompt written in Rust, optimized for tmux environments
 
 ## Features
 
-- **⚡ Ultra-fast rendering** — ~5.7ms average with intelligent caching across Git status, language detection, and repository root lookups
+- **⚡ Ultra-fast rendering** — ~4.7ms average with intelligent caching across Git status, language detection, and repository root lookups
 - **🎯 Tmux-aware** — Automatic pane width detection, responsive truncation, and cross-pane cache sharing via background daemon
 - **🔧 Rich Git integration** — Branch display, staged/unstaged/untracked file counts using high-performance `gix` library
 - **🔢 Language detection** — Automatic language recognition with configurable icons and colors; displays runtime versions
@@ -44,7 +51,7 @@ cargo install paneship
 Or build from source:
 
 ```bash
-git clone https://github.com/anomalyco/paneship.git
+git clone https://github.com/andev0x/paneship.git
 cd paneship
 cargo install --path .
 ```
@@ -90,7 +97,7 @@ PROMPT_COMMAND='PROMPT="$(paneship render --exit-code $? --width $COLUMNS)"'
 Paneship displays a two-line prompt:
 
 ```
-~/my-project   main  📦 v1.0.0            🦀 Rust 1.75   󰞌 125ms   14:32
+ ~/.../paneship   main ~2  ·  📦 v1.0.0                  🦀 1.95.0   󰞌 11ms   󰥔 20:56
 ❯
 ```
 
@@ -303,7 +310,7 @@ Contributions are welcome! We follow a standard open-source workflow:
 
 ### Reporting Issues
 
-Found a bug or have an idea? Please open an issue on [GitHub Issues](https://github.com/anomalyco/paneship/issues) with:
+Found a bug or have an idea? Please open an issue on [GitHub Issues](https://github.com/andev0x/paneship/issues) with:
 
 - Clear title and description
 - Steps to reproduce (if applicable)
@@ -361,7 +368,7 @@ On a mid-sized Rust repository (500+ dependencies):
 
 | Prompt | Avg Render Time |
 |--------|-----------------|
-| Paneship (with cache) | ~5.7ms |
+| Paneship (with cache) | ~4.7ms |
 | Paneship (cold cache) | ~45ms |
 | Starship | ~22ms |
 | Oh My Zsh | ~150ms+ |
@@ -383,8 +390,8 @@ Licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 For questions or discussions, feel free to:
 
-- Open a [GitHub Discussion](https://github.com/anomalyco/paneship/discussions)
-- File an [issue](https://github.com/anomalyco/paneship/issues)
+- Open a [GitHub Discussion](https://github.com/andev0x/paneship/discussions)
+- File an [issue](https://github.com/andev0x/paneship/issues)
 - Check existing documentation and examples
 
 ---
