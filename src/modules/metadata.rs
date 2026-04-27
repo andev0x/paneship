@@ -9,12 +9,41 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         return String::new();
     }
 
-    let mut parts = Vec::new();
-    let metadata_config = &context.config.metadata;
+    let mut rendered = Vec::new();
+    let separator = "   ";
 
-    if let Some(version) = paneship_version() {
-        parts.push(styled(&metadata_config.paneship_color, &version));
+    for candidate in metadata_parts(context) {
+        if candidate.is_empty() {
+            continue;
+        }
+
+        let assembled = if rendered.is_empty() {
+            candidate.clone()
+        } else {
+            format!("{}{}{}", rendered.join(separator), separator, candidate)
+        };
+
+        if visible_width(assembled.as_str()) <= max_visible_width {
+            rendered.push(candidate);
+        }
     }
+
+    let output = rendered.join(separator);
+    if output.is_empty() {
+        return String::new();
+    }
+
+    if visible_width(output.as_str()) <= max_visible_width {
+        output
+    } else {
+        let plain = crate::core::layout::strip_ansi(output.as_str());
+        truncate_plain_to_width(plain.as_str(), max_visible_width)
+    }
+}
+
+fn metadata_parts(context: &PromptContext) -> Vec<String> {
+    let metadata_config = &context.config.metadata;
+    let mut parts = Vec::new();
 
     if let Some((language_name, version)) = detect_language_version(context.cwd.as_path()) {
         let language_style = metadata_config.language_style(language_name.as_str());
@@ -22,37 +51,33 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         parts.push(styled(&language_style.color, &language_value));
     }
 
+    if let Some(duration) = render_command_duration(context) {
+        parts.push(duration);
+    }
+
     if let Some(time) = current_time_hhmm() {
-        parts.push(styled(&metadata_config.time_color, &time));
+        parts.push(styled(&metadata_config.time_color, &format!("󰥔 {time}")));
     }
 
-    let separator = "  ";
-    let mut rendered = String::new();
+    parts
+}
 
-    for part in parts {
-        let candidate = if rendered.is_empty() {
-            part
+fn render_command_duration(context: &PromptContext) -> Option<String> {
+    let ms = context.last_command_duration_ms?;
+    let plain = if ms < 1_000 {
+        format!("󰞌 {ms}ms")
+    } else {
+        let secs = ms / 1_000;
+        if secs < 60 {
+            format!("󰞌 {secs}s")
         } else {
-            format!("{rendered}{separator}{part}")
-        };
-
-        if visible_width(candidate.as_str()) <= max_visible_width {
-            rendered = candidate;
-        } else {
-            break;
+            let mins = secs / 60;
+            let rem_secs = secs % 60;
+            format!("󰞌 {mins}m{rem_secs:02}s")
         }
-    }
+    };
 
-    if rendered.is_empty() {
-        return String::new();
-    }
-
-    if visible_width(rendered.as_str()) > max_visible_width {
-        let plain = crate::core::layout::strip_ansi(rendered.as_str());
-        return truncate_plain_to_width(plain.as_str(), max_visible_width);
-    }
-
-    rendered
+    Some(styled("2;37", plain.as_str()))
 }
 
 fn current_time_hhmm() -> Option<String> {
@@ -61,7 +86,14 @@ fn current_time_hhmm() -> Option<String> {
         libc::time(&mut now as *mut libc::time_t);
 
         let mut local: libc::tm = std::mem::zeroed();
+
+        #[cfg(not(windows))]
         if libc::localtime_r(&now as *const libc::time_t, &mut local as *mut libc::tm).is_null() {
+            return None;
+        }
+
+        #[cfg(windows)]
+        if libc::localtime_s(&mut local as *mut libc::tm, &now as *const libc::time_t) != 0 {
             return None;
         }
 
@@ -107,7 +139,11 @@ fn detect_rust(cwd: &Path) -> Option<(String, String)> {
 fn detect_node(cwd: &Path) -> Option<(String, String)> {
     find_upwards(cwd, "package.json")?;
 
-    let output = Command::new("node").arg("-v").current_dir(cwd).output().ok()?;
+    let output = Command::new("node")
+        .arg("-v")
+        .current_dir(cwd)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -117,7 +153,10 @@ fn detect_node(cwd: &Path) -> Option<(String, String)> {
         return None;
     }
 
-    Some(("node".to_string(), version.trim_start_matches('v').to_string()))
+    Some((
+        "node".to_string(),
+        version.trim_start_matches('v').to_string(),
+    ))
 }
 
 fn detect_bun(cwd: &Path) -> Option<(String, String)> {
@@ -175,7 +214,11 @@ fn detect_python(cwd: &Path) -> Option<(String, String)> {
 fn detect_go(cwd: &Path) -> Option<(String, String)> {
     find_upwards(cwd, "go.mod")?;
 
-    let output = Command::new("go").arg("version").current_dir(cwd).output().ok()?;
+    let output = Command::new("go")
+        .arg("version")
+        .current_dir(cwd)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -185,7 +228,10 @@ fn detect_go(cwd: &Path) -> Option<(String, String)> {
         .split_whitespace()
         .find(|token| token.starts_with("go1."))?
         .to_string();
-    Some(("go".to_string(), version.trim_start_matches("go").to_string()))
+    Some((
+        "go".to_string(),
+        version.trim_start_matches("go").to_string(),
+    ))
 }
 
 fn detect_deno(cwd: &Path) -> Option<(String, String)> {
@@ -230,7 +276,11 @@ fn detect_ruby(cwd: &Path) -> Option<(String, String)> {
 fn detect_php(cwd: &Path) -> Option<(String, String)> {
     find_upwards(cwd, "composer.json")?;
 
-    let output = Command::new("php").arg("-v").current_dir(cwd).output().ok()?;
+    let output = Command::new("php")
+        .arg("-v")
+        .current_dir(cwd)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -310,15 +360,6 @@ fn find_upwards(start: &Path, file_name: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
-}
-
-fn paneship_version() -> Option<String> {
-    let version = env!("CARGO_PKG_VERSION");
-    if version.is_empty() {
-        None
-    } else {
-        Some(format!("v{version}"))
-    }
 }
 
 fn styled(color_code: &str, value: &str) -> String {

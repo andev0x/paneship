@@ -6,11 +6,17 @@ pub struct PromptContext {
     pub cwd: PathBuf,
     pub width: usize,
     pub exit_code: i32,
+    pub last_command_duration_ms: Option<u64>,
     pub config: std::sync::Arc<Config>,
 }
 
 impl PromptContext {
-    pub fn from_inputs(cwd: Option<PathBuf>, width: Option<usize>, exit_code: i32) -> Self {
+    pub fn from_inputs(
+        cwd: Option<PathBuf>,
+        width: Option<usize>,
+        exit_code: i32,
+        last_command_duration_ms: Option<u64>,
+    ) -> Self {
         let cwd =
             cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
@@ -31,14 +37,21 @@ impl PromptContext {
                 .unwrap_or(80)
         });
 
+        let last_command_duration_ms = last_command_duration_ms.or_else(read_duration_ms_from_env);
+
         let config = std::sync::Arc::new(Config::load());
 
         Self {
             cwd,
             width,
             exit_code,
+            last_command_duration_ms,
             config,
         }
     }
 }
-// Since I added terminal_size, I should check if it is in Cargo.toml
+
+fn read_duration_ms_from_env() -> Option<u64> {
+    let raw = std::env::var("PANESHIP_LAST_CMD_DURATION_MS").ok()?;
+    raw.trim().parse::<u64>().ok()
+}

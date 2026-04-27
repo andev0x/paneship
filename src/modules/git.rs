@@ -71,7 +71,10 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     }
 }
 
-fn status_tokens(snapshot: &GitSnapshot, config: &crate::core::config::GitConfig) -> Vec<(String, String)> {
+fn status_tokens(
+    snapshot: &GitSnapshot,
+    config: &crate::core::config::GitConfig,
+) -> Vec<(String, String)> {
     let mut status = Vec::new();
 
     if snapshot.staged > 0 {

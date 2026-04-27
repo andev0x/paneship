@@ -66,7 +66,7 @@ impl Default for GitConfig {
         Self {
             branch_icon: "\u{e0a0}".to_string(),
             staged_icon: "+".to_string(),
-            unstaged_icon: "!".to_string(),
+            unstaged_icon: "~".to_string(),
             untracked_icon: "?".to_string(),
         }
     }
@@ -75,8 +75,8 @@ impl Default for GitConfig {
 impl Default for StatusConfig {
     fn default() -> Self {
         Self {
-            success_icon: "\u{279c}".to_string(),
-            failure_icon: "\u{279c}".to_string(),
+            success_icon: "\u{276f}".to_string(),
+            failure_icon: "\u{276f}".to_string(),
         }
     }
 }
@@ -104,9 +104,7 @@ impl MetadataConfig {
     pub fn language_style(&self, name: &str) -> LanguageStyleConfig {
         self.languages.get(name).cloned().unwrap_or_else(|| {
             let mut defaults = default_language_styles();
-            defaults
-                .remove(name)
-                .unwrap_or_default()
+            defaults.remove(name).unwrap_or_default()
         })
     }
 }
@@ -192,7 +190,12 @@ impl Config {
     }
 
     fn get_config_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home).join(".config/paneship/config.toml")
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home)
+            .join(".config")
+            .join("paneship")
+            .join("config.toml")
     }
 }

@@ -1,13 +1,13 @@
 [package]
 name = "paneship"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
-authors = ["Paneship contributors"]
+authors = ["andev0x"]
 description = "A blazingly fast, high-performance shell prompt optimized for tmux and large Git repositories"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/anomalyco/paneship"
-homepage = "https://github.com/anomalyco/paneship"
+repository = "https://github.com/andev0x/paneship"
+homepage = "https://github.com/andev0x/paneship"
 documentation = "https://docs.rs/paneship"
 keywords = ["prompt", "shell", "tmux", "git", "performance"]
 categories = ["command-line-utilities"]

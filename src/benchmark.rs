@@ -59,7 +59,8 @@ pub fn run(options: BenchmarkOptions) -> Result<BenchmarkReport, String> {
             let mut total_duration = Duration::ZERO;
             for _ in 0..opt.iterations {
                 let iter_start = Instant::now();
-                let context = PromptContext::from_inputs(opt.cwd.clone(), opt.width, opt.exit_code);
+                let context =
+                    PromptContext::from_inputs(opt.cwd.clone(), opt.width, opt.exit_code, None);
                 renderer::render(&context);
                 total_duration += iter_start.elapsed();
             }
