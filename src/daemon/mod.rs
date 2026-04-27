@@ -19,7 +19,7 @@ pub enum Response {
 }
 
 pub fn get_socket_path() -> PathBuf {
-    let uid = std::process::id();
+    let uid = unsafe { libc::geteuid() };
     std::env::temp_dir().join(format!("paneship-{}.sock", uid))
 }
 
@@ -92,4 +92,23 @@ pub fn notify_git(path: &Path, snapshot: GitSnapshot) {
         let request = Request::NotifyGit(path.to_path_buf(), snapshot);
         let _ = bincode::serialize_into(&mut stream, &request);
     }
+}
+
+pub fn ping() -> bool {
+    let socket_path = get_socket_path();
+    let Ok(mut stream) = UnixStream::connect(socket_path) else {
+        return false;
+    };
+
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(10)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(10)));
+
+    if bincode::serialize_into(&mut stream, &Request::Ping).is_err() {
+        return false;
+    }
+
+    matches!(
+        bincode::deserialize_from::<_, Response>(&mut stream),
+        Ok(Response::Pong)
+    )
 }

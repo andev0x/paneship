@@ -1,3 +1,4 @@
+use crate::cache::get_or_compute_language;
 use crate::core::layout::{truncate_plain_to_width, visible_width};
 use crate::core::prompt::PromptContext;
 use std::fs;
@@ -45,7 +46,9 @@ fn metadata_parts(context: &PromptContext) -> Vec<String> {
     let metadata_config = &context.config.metadata;
     let mut parts = Vec::new();
 
-    if let Some((language_name, version)) = detect_language_version(context.cwd.as_path()) {
+    if let Some((language_name, version)) = get_or_compute_language(context.cwd.as_path(), || {
+        detect_language_version(context.cwd.as_path())
+    }) {
         let language_style = metadata_config.language_style(language_name.as_str());
         let language_value = format!("{} {version}", language_style.icon);
         parts.push(styled(&language_style.color, &language_value));

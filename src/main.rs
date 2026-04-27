@@ -28,6 +28,7 @@ enum CliCommand {
     Render(RenderOptions),
     Benchmark(BenchmarkOptions),
     Daemon,
+    DaemonPing,
     Help,
 }
 
@@ -83,6 +84,14 @@ fn main() {
             }
         }
         #[cfg(unix)]
+        CliCommand::DaemonPing => {
+            if daemon::ping() {
+                println!("ok");
+            } else {
+                std::process::exit(1);
+            }
+        }
+        #[cfg(unix)]
         CliCommand::Init(options) => {
             handle_init(options);
         }
@@ -119,7 +128,7 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
 
     #[cfg(unix)]
     if args[0] == "daemon" {
-        return Ok(CliCommand::Daemon);
+        return parse_daemon_args(&args[1..]);
     }
 
     #[cfg(unix)]
@@ -155,9 +164,8 @@ fn handle_init(options: InitOptions) {
 #[cfg(unix)]
 fn zsh_init_script() -> String {
     [
-        "if ! pgrep -x \"paneship\" > /dev/null; then",
-        "    paneship daemon > /dev/null 2>&1 &",
-        "    disown",
+        "if ! paneship daemon ping > /dev/null 2>&1; then",
+        "    paneship daemon > /dev/null 2>&1 &!",
         "fi",
         "",
         "zmodload zsh/datetime",
@@ -169,6 +177,8 @@ fn zsh_init_script() -> String {
         "}",
         "",
         "paneship_precmd() {",
+        "    local exit_code=$?",
+        "    local -a duration_arg",
         "    if (( PANESHIP_CMD_START > 0 )); then",
         "        local -F now=$EPOCHREALTIME",
         "        local -F elapsed=$(( now - PANESHIP_CMD_START ))",
@@ -176,16 +186,16 @@ fn zsh_init_script() -> String {
         "        if (( elapsed_ms < 0 )); then",
         "            elapsed_ms=0",
         "        fi",
-        "        export PANESHIP_LAST_CMD_DURATION_MS=$elapsed_ms",
-        "    else",
-        "        unset PANESHIP_LAST_CMD_DURATION_MS",
+        "        duration_arg=(--duration-ms \"$elapsed_ms\")",
         "    fi",
+        "    PROMPT=\"$(paneship render --exit-code \"$exit_code\" --width \"${COLUMNS:-80}\" --cwd \"$PWD\" \"${duration_arg[@]}\")\"",
+        "    PANESHIP_CMD_START=0",
         "}",
         "",
+        "add-zsh-hook -D preexec paneship_preexec 2>/dev/null",
+        "add-zsh-hook -D precmd paneship_precmd 2>/dev/null",
         "add-zsh-hook preexec paneship_preexec",
         "add-zsh-hook precmd paneship_precmd",
-        "",
-        "PROMPT='$(paneship render --exit-code $? --width $COLUMNS)'",
     ]
     .join("\n")
 }
@@ -205,6 +215,7 @@ fn append_zsh_onboarding(script: &str) -> Result<(), String> {
     let existing = std::fs::read_to_string(&zshrc_path).unwrap_or_default();
     if existing.contains(start_marker)
         || existing.contains("paneship render --exit-code $? --width $COLUMNS")
+        || existing.contains("paneship daemon ping")
     {
         println!("Paneship onboarding is already configured in {zshrc_path}");
         return Ok(());
@@ -360,6 +371,15 @@ fn parse_benchmark_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 #[cfg(unix)]
+fn parse_daemon_args(args: &[String]) -> Result<CliCommand, String> {
+    match args {
+        [] => Ok(CliCommand::Daemon),
+        [subcommand] if subcommand == "ping" => Ok(CliCommand::DaemonPing),
+        [unknown, ..] => Err(format!("unknown daemon argument: {unknown}")),
+    }
+}
+
+#[cfg(unix)]
 fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
     if args.is_empty() {
         return Err("missing init target. Try: paneship init zsh".to_string());
@@ -391,5 +411,5 @@ fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>]\n  paneship init zsh [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n\nINIT OPTIONS:\n  paneship init zsh         Print zsh init script (for eval)\n  paneship init zsh to onboarding\n                            Append paneship block to ~/.zshrc\n  paneship init zsh --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>]\n  paneship init zsh [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon [ping]\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n\nINIT OPTIONS:\n  paneship init zsh         Print zsh init script (for eval)\n  paneship init zsh to onboarding\n                            Append paneship block to ~/.zshrc\n  paneship init zsh --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
 }

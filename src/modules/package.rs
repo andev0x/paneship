@@ -1,3 +1,4 @@
+use crate::cache::get_or_compute_package_version;
 use crate::core::prompt::PromptContext;
 use std::fs;
 
@@ -6,7 +7,9 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         return String::new();
     }
 
-    let Some(version) = find_cargo_manifest_version(context.cwd.as_path()) else {
+    let Some(version) = get_or_compute_package_version(context.cwd.as_path(), || {
+        find_cargo_manifest_version(context.cwd.as_path())
+    }) else {
         return String::new();
     };
 

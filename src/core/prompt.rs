@@ -39,7 +39,7 @@ impl PromptContext {
 
         let last_command_duration_ms = last_command_duration_ms.or_else(read_duration_ms_from_env);
 
-        let config = std::sync::Arc::new(Config::load());
+        let config = Config::load_cached();
 
         Self {
             cwd,

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -187,6 +188,11 @@ impl Config {
         } else {
             Self::default()
         }
+    }
+
+    pub fn load_cached() -> Arc<Self> {
+        static CONFIG_CACHE: OnceLock<Arc<Config>> = OnceLock::new();
+        Arc::clone(CONFIG_CACHE.get_or_init(|| Arc::new(Self::load())))
     }
 
     fn get_config_path() -> PathBuf {
