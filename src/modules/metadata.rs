@@ -86,9 +86,7 @@ fn detect_rust(cwd: &Path) -> Option<(String, String)> {
         return Some(("rust".to_string(), version));
     }
 
-    if find_upwards(cwd, "Cargo.toml").is_none() {
-        return None;
-    }
+    find_upwards(cwd, "Cargo.toml")?;
 
     let output = Command::new("rustc")
         .arg("--version")
@@ -107,9 +105,7 @@ fn detect_rust(cwd: &Path) -> Option<(String, String)> {
 }
 
 fn detect_node(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "package.json").is_none() {
-        return None;
-    }
+    find_upwards(cwd, "package.json")?;
 
     let output = Command::new("node").arg("-v").current_dir(cwd).output().ok()?;
     if !output.status.success() {
@@ -177,9 +173,7 @@ fn detect_python(cwd: &Path) -> Option<(String, String)> {
 }
 
 fn detect_go(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "go.mod").is_none() {
-        return None;
-    }
+    find_upwards(cwd, "go.mod")?;
 
     let output = Command::new("go").arg("version").current_dir(cwd).output().ok()?;
     if !output.status.success() {
@@ -234,9 +228,7 @@ fn detect_ruby(cwd: &Path) -> Option<(String, String)> {
 }
 
 fn detect_php(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "composer.json").is_none() {
-        return None;
-    }
+    find_upwards(cwd, "composer.json")?;
 
     let output = Command::new("php").arg("-v").current_dir(cwd).output().ok()?;
     if !output.status.success() {

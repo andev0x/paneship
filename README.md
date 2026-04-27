@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/paneship.svg)](https://crates.io/crates/paneship)
 [![docs.rs](https://docs.rs/paneship/badge.svg)](https://docs.rs/paneship)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub Actions](https://github.com/anomalyco/paneship/workflows/CI/badge.svg)](https://github.com/anomalyco/paneship/actions)
+
 
 > A high-performance shell prompt for large repositories and tmux workflows.
 
@@ -303,7 +303,7 @@ cargo run --release -- benchmark --compare-starship --panes 8
 
 ## 📦 Installing from Release
 
-Download prebuilt binaries from [GitHub Releases](https://github.com/anomalyco/paneship/releases).
+Download prebuilt binaries from [GitHub Releases](https://github.com/andev0x/paneship/releases).
 
 Supported platforms:
 - Linux x86_64 (musl, glibc)
@@ -317,12 +317,6 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ## 📄 License
 
 Paneship is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
-## 🙏 Acknowledgments
-
-- Powered by [Gitoxide](https://github.com/Byron/gitoxide) for high-performance Git introspection
-- Inspired by [Starship](https://starship.rs/) and [Oh My Zsh](https://ohmyz.sh/)
-- Built with ❤️ by the Paneship community
 
 ## 💡 Tips & Tricks
 
@@ -354,8 +348,8 @@ RUST_LOG=debug paneship render --exit-code 0 --width 120
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/anomalyco/paneship/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/anomalyco/paneship/discussions)
+- **Issues**: [GitHub Issues](https://github.com/andev0x/paneship/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/andev0x/paneship/discussions)
 - **Crates.io**: [paneship on crates.io](https://crates.io/crates/paneship)
 
 ## 🎯 Roadmap
@@ -378,3 +372,4 @@ RUST_LOG=debug paneship render --exit-code 0 --width 120
 ---
 
 **Enjoy blazing fast prompts!** 🚀
+

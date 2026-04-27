@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub directory: DirectoryConfig,
@@ -100,24 +100,13 @@ impl Default for LanguageStyleConfig {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            directory: DirectoryConfig::default(),
-            git: GitConfig::default(),
-            status: StatusConfig::default(),
-            metadata: MetadataConfig::default(),
-        }
-    }
-}
-
 impl MetadataConfig {
     pub fn language_style(&self, name: &str) -> LanguageStyleConfig {
         self.languages.get(name).cloned().unwrap_or_else(|| {
             let mut defaults = default_language_styles();
             defaults
                 .remove(name)
-                .unwrap_or_else(LanguageStyleConfig::default)
+                .unwrap_or_default()
         })
     }
 }
