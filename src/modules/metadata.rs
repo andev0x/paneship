@@ -55,9 +55,7 @@ fn metadata_parts(context: &PromptContext) -> Vec<String> {
     let metadata_config = &context.config.metadata;
     let mut parts = Vec::new();
 
-    if let Some((language_name, version)) = get_or_compute_language(context.cwd.as_path(), || {
-        detect_language_version(context.cwd.as_path())
-    }) {
+    if let Some((language_name, version)) = detect_language_version(context.cwd.as_path()) {
         let language_style = metadata_config.language_style(language_name.as_str());
         let language_value = format!("{} {version}", language_style.icon);
         parts.push(styled(&language_style.color, &language_value));
@@ -114,93 +112,134 @@ fn current_time_hhmm() -> Option<String> {
 }
 
 fn detect_language_version(cwd: &Path) -> Option<(String, String)> {
-    detect_rust(cwd)
-        .or_else(|| detect_node(cwd))
-        .or_else(|| detect_bun(cwd))
-        .or_else(|| detect_python(cwd))
-        .or_else(|| detect_go(cwd))
-        .or_else(|| detect_deno(cwd))
-        .or_else(|| detect_ruby(cwd))
-        .or_else(|| detect_php(cwd))
-        .or_else(|| detect_java(cwd))
+    if let Some((name, marker)) = detect_language_marker(cwd) {
+        return get_or_compute_language(marker.as_path(), || {
+            fetch_language_version(cwd, name.as_str(), marker.as_path())
+        });
+    }
+    None
 }
 
-fn detect_rust(cwd: &Path) -> Option<(String, String)> {
-    if let Some(version) = rust_toolchain_version(cwd) {
-        return Some(("rust".to_string(), version));
-    }
-
-    find_upwards(cwd, "Cargo.toml")?;
-
-    let output = Command::new("rustc")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut parts = text.split_whitespace();
-    let _ = parts.next();
-    let version = parts.next()?.to_string();
-    Some(("rust".to_string(), version))
-}
-
-fn detect_node(cwd: &Path) -> Option<(String, String)> {
-    find_upwards(cwd, "package.json")?;
-
-    let output = Command::new("node")
-        .arg("-v")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if version.is_empty() {
-        return None;
-    }
-
-    Some((
-        "node".to_string(),
-        version.trim_start_matches('v').to_string(),
-    ))
-}
-
-fn detect_bun(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "bun.lockb").is_none() && find_upwards(cwd, "bun.lock").is_none() {
-        return None;
-    }
-
-    let output = Command::new("bun")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if version.is_empty() {
-        return None;
-    }
-
-    Some(("bun".to_string(), version))
-}
-
-fn detect_python(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "pyproject.toml").is_none()
-        && find_upwards(cwd, "requirements.txt").is_none()
-        && find_upwards(cwd, "setup.py").is_none()
+fn detect_language_marker(cwd: &Path) -> Option<(String, std::path::PathBuf)> {
+    if let Some(path) = find_upwards(cwd, "rust-toolchain.toml")
+        .or_else(|| find_upwards(cwd, "rust-toolchain"))
+        .or_else(|| find_upwards(cwd, "Cargo.toml"))
     {
-        return None;
+        return Some(("rust".to_string(), path));
     }
 
+    if let Some(path) = find_upwards(cwd, "package.json") {
+        return Some(("node".to_string(), path));
+    }
+
+    if let Some(path) = find_upwards(cwd, "bun.lockb").or_else(|| find_upwards(cwd, "bun.lock")) {
+        return Some(("bun".to_string(), path));
+    }
+
+    if let Some(path) = find_upwards(cwd, "pyproject.toml")
+        .or_else(|| find_upwards(cwd, "requirements.txt"))
+        .or_else(|| find_upwards(cwd, "setup.py"))
+    {
+        return Some(("python".to_string(), path));
+    }
+
+    if let Some(path) = find_upwards(cwd, "go.mod") {
+        return Some(("go".to_string(), path));
+    }
+
+    if let Some(path) = find_upwards(cwd, "deno.json").or_else(|| find_upwards(cwd, "deno.jsonc")) {
+        return Some(("deno".to_string(), path));
+    }
+
+    if let Some(path) = find_upwards(cwd, "Gemfile").or_else(|| find_upwards(cwd, ".ruby-version"))
+    {
+        return Some(("ruby".to_string(), path));
+    }
+
+    if let Some(path) = find_upwards(cwd, "composer.json") {
+        return Some(("php".to_string(), path));
+    }
+
+    if let Some(path) = find_upwards(cwd, "pom.xml")
+        .or_else(|| find_upwards(cwd, "build.gradle"))
+        .or_else(|| find_upwards(cwd, "build.gradle.kts"))
+    {
+        return Some(("java".to_string(), path));
+    }
+
+    None
+}
+
+fn fetch_language_version(
+    cwd: &Path,
+    language: &str,
+    marker_path: &Path,
+) -> Option<(String, String)> {
+    match language {
+        "rust" => {
+            fetch_rust_version(cwd, marker_path).map(|version| (language.to_string(), version))
+        }
+        "node" => fetch_command_version(cwd, "node", &["-v"]).map(|version| {
+            (
+                language.to_string(),
+                version.trim_start_matches('v').to_string(),
+            )
+        }),
+        "bun" => fetch_command_version(cwd, "bun", &["--version"])
+            .map(|version| (language.to_string(), version)),
+        "python" => fetch_python_version(cwd).map(|version| (language.to_string(), version)),
+        "go" => fetch_go_version(cwd).map(|version| (language.to_string(), version)),
+        "deno" => fetch_command_version(cwd, "deno", &["--version"]).and_then(|text| {
+            let first_line = text.lines().next()?.trim();
+            let version = first_line.split_whitespace().nth(1)?.to_string();
+            Some((language.to_string(), version))
+        }),
+        "ruby" => fetch_command_version(cwd, "ruby", &["--version"]).and_then(|text| {
+            let version = text.split_whitespace().nth(1)?.to_string();
+            Some((language.to_string(), version))
+        }),
+        "php" => fetch_command_version(cwd, "php", &["-v"]).and_then(|text| {
+            let first_line = text.lines().next()?.trim();
+            let mut parts = first_line.split_whitespace();
+            let _ = parts.next();
+            let version = parts.next()?.to_string();
+            Some((language.to_string(), version))
+        }),
+        "java" => fetch_java_version(cwd).map(|version| (language.to_string(), version)),
+        _ => None,
+    }
+}
+
+fn fetch_rust_version(cwd: &Path, marker_path: &Path) -> Option<String> {
+    if let Some(version) = rust_toolchain_version_from_path(marker_path) {
+        return Some(version);
+    }
+
+    fetch_command_version(cwd, "rustc", &["--version"]).and_then(|text| {
+        let mut parts = text.split_whitespace();
+        let _ = parts.next();
+        parts.next().map(|version| version.to_string())
+    })
+}
+
+fn fetch_command_version(cwd: &Path, cmd: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(cmd)
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn fetch_python_version(cwd: &Path) -> Option<String> {
     let output = Command::new("python3")
         .arg("--version")
         .current_dir(cwd)
@@ -219,13 +258,10 @@ fn detect_python(cwd: &Path) -> Option<(String, String)> {
 
     let mut parts = text.split_whitespace();
     let _ = parts.next();
-    let version = parts.next()?.to_string();
-    Some(("python".to_string(), version))
+    parts.next().map(|version| version.to_string())
 }
 
-fn detect_go(cwd: &Path) -> Option<(String, String)> {
-    find_upwards(cwd, "go.mod")?;
-
+fn fetch_go_version(cwd: &Path) -> Option<String> {
     let output = Command::new("go")
         .arg("version")
         .current_dir(cwd)
@@ -236,102 +272,32 @@ fn detect_go(cwd: &Path) -> Option<(String, String)> {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    let version = text
-        .split_whitespace()
-        .find(|token| token.starts_with("go1."))?
-        .to_string();
-    Some((
-        "go".to_string(),
-        version.trim_start_matches("go").to_string(),
-    ))
+    text.split_whitespace()
+        .find(|token| token.starts_with("go1."))
+        .map(|token| token.trim_start_matches("go").to_string())
 }
 
-fn detect_deno(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "deno.json").is_none() && find_upwards(cwd, "deno.jsonc").is_none() {
-        return None;
-    }
-
-    let output = Command::new("deno")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let first_line = text.lines().next()?.trim();
-    let version = first_line.split_whitespace().nth(1)?.to_string();
-    Some(("deno".to_string(), version))
-}
-
-fn detect_ruby(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "Gemfile").is_none() && find_upwards(cwd, ".ruby-version").is_none() {
-        return None;
-    }
-
-    let output = Command::new("ruby")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let version = text.split_whitespace().nth(1)?.to_string();
-    Some(("ruby".to_string(), version))
-}
-
-fn detect_php(cwd: &Path) -> Option<(String, String)> {
-    find_upwards(cwd, "composer.json")?;
-
-    let output = Command::new("php")
-        .arg("-v")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let first_line = text.lines().next()?.trim();
-    let mut parts = first_line.split_whitespace();
-    let _ = parts.next();
-    let version = parts.next()?.to_string();
-    Some(("php".to_string(), version))
-}
-
-fn detect_java(cwd: &Path) -> Option<(String, String)> {
-    if find_upwards(cwd, "pom.xml").is_none()
-        && find_upwards(cwd, "build.gradle").is_none()
-        && find_upwards(cwd, "build.gradle.kts").is_none()
-    {
-        return None;
-    }
-
+fn fetch_java_version(cwd: &Path) -> Option<String> {
     let output = Command::new("java")
         .arg("-version")
         .current_dir(cwd)
         .output()
         .ok()?;
 
-    let text = if output.status.success() {
-        String::from_utf8_lossy(&output.stderr).to_string()
-    } else {
+    if !output.status.success() {
         return None;
-    };
+    }
 
+    let text = String::from_utf8_lossy(&output.stderr).to_string();
     let first_line = text.lines().next()?.trim();
-    let quoted = first_line.split('"').nth(1)?.to_string();
-    Some(("java".to_string(), quoted))
+    first_line
+        .split('"')
+        .nth(1)
+        .map(|quoted| quoted.to_string())
 }
 
-fn rust_toolchain_version(cwd: &Path) -> Option<String> {
-    if let Some(path) = find_upwards(cwd, "rust-toolchain.toml") {
+fn rust_toolchain_version_from_path(path: &Path) -> Option<String> {
+    if path.file_name().and_then(|name| name.to_str()) == Some("rust-toolchain.toml") {
         let content = fs::read_to_string(path).ok()?;
         for line in content.lines() {
             let trimmed = line.trim();
@@ -347,7 +313,7 @@ fn rust_toolchain_version(cwd: &Path) -> Option<String> {
         }
     }
 
-    if let Some(path) = find_upwards(cwd, "rust-toolchain") {
+    if path.file_name().and_then(|name| name.to_str()) == Some("rust-toolchain") {
         let content = fs::read_to_string(path).ok()?;
         for line in content.lines() {
             let value = line.trim();
