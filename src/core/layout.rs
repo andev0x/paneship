@@ -1,6 +1,10 @@
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn strip_ansi(input: &str) -> String {
+    if !input.as_bytes().contains(&b'\x1b') {
+        return input.to_string();
+    }
+
     let mut output = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
     let mut idx = 0;
@@ -125,6 +129,10 @@ pub fn wrap_ansi_for_zsh(input: &str) -> String {
 }
 
 pub fn visible_width(input: &str) -> usize {
+    if !input.as_bytes().contains(&b'\x1b') {
+        return UnicodeWidthStr::width(input);
+    }
+
     UnicodeWidthStr::width(strip_ansi(input).as_str())
 }
 

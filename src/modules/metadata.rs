@@ -4,6 +4,7 @@ use crate::core::prompt::PromptContext;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use unicode_width::UnicodeWidthStr;
 
 pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) -> String {
     if max_visible_width == 0 {
@@ -12,20 +13,28 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
 
     let mut rendered = Vec::new();
     let separator = "   ";
+    let separator_width = UnicodeWidthStr::width(separator);
+    let mut current_width = 0;
 
     for candidate in metadata_parts(context) {
         if candidate.is_empty() {
             continue;
         }
 
-        let assembled = if rendered.is_empty() {
-            candidate.clone()
+        let candidate_width = visible_width(candidate.as_str());
+        if candidate_width == 0 {
+            continue;
+        }
+
+        let proposed = if rendered.is_empty() {
+            candidate_width
         } else {
-            format!("{}{}{}", rendered.join(separator), separator, candidate)
+            current_width + separator_width + candidate_width
         };
 
-        if visible_width(assembled.as_str()) <= max_visible_width {
+        if proposed <= max_visible_width {
             rendered.push(candidate);
+            current_width = proposed;
         }
     }
 
