@@ -71,9 +71,7 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
 
         if let Some(removed) = status_tokens.pop() {
             if let Some(width) = status_widths.get(status_tokens.len()) {
-                status_total_width = status_total_width
-                    .saturating_sub(*width)
-                    .saturating_sub(1);
+                status_total_width = status_total_width.saturating_sub(*width).saturating_sub(1);
             } else {
                 status_total_width = status_tokens
                     .iter()
@@ -112,12 +110,15 @@ fn status_tokens(
 }
 
 fn snapshot_for_context(context: &PromptContext) -> Option<GitSnapshot> {
+    let cache_path =
+        crate::cache::repo_root_for(context.cwd.as_path()).unwrap_or_else(|| context.cwd.clone());
+
     #[cfg(unix)]
     {
-        crate::daemon::query_git(&context.cwd).or_else(|| {
-            let fresh = get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd));
+        crate::daemon::query_git(&cache_path).or_else(|| {
+            let fresh = get_or_compute_git(&cache_path, || compute_git_status(&cache_path));
             if let Some(ref s) = fresh {
-                crate::daemon::notify_git(&context.cwd, s.clone());
+                crate::daemon::notify_git(&cache_path, s.clone());
             }
             fresh
         })
@@ -125,7 +126,7 @@ fn snapshot_for_context(context: &PromptContext) -> Option<GitSnapshot> {
 
     #[cfg(not(unix))]
     {
-        get_or_compute_git(&context.cwd, || compute_git_status(&context.cwd))
+        get_or_compute_git(&cache_path, || compute_git_status(&cache_path))
     }
 }
 

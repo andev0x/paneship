@@ -129,14 +129,7 @@ fn compact_general_path(path: &Path, truncation_length: usize) -> String {
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
-    crate::cache::get_or_compute_repo_root(start, || {
-        for dir in start.ancestors() {
-            if dir.join(".git").exists() {
-                return Some(dir.to_path_buf());
-            }
-        }
-        None
-    })
+    crate::cache::repo_root_for(start)
 }
 
 fn leading_prefix(path: &Path, hidden_prefix: &mut bool) -> String {

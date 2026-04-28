@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const GIT_CACHE_TTL: Duration = Duration::from_millis(350);
-const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(5);
-const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(5);
+const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(30);
+const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(60);
 
 type LanguageSnapshot = (String, String);
 
@@ -44,6 +45,7 @@ fn git_cache() -> &'static Mutex<GitCacheMap> {
 struct TimedCacheEntry<T> {
     expires_at: Instant,
     value: T,
+    source_mtime: Option<SystemTime>,
 }
 
 fn language_cache() -> &'static Mutex<LanguageCacheMap> {
@@ -62,7 +64,8 @@ pub fn get_or_compute_git<F>(path: &Path, compute: F) -> Option<GitSnapshot>
 where
     F: FnOnce() -> Option<GitSnapshot>,
 {
-    if let Some(cached) = get_git(path) {
+    let cache_key = git_cache_key(path);
+    if let Some(cached) = get_git(cache_key.as_path()) {
         return cached;
     }
 
@@ -73,7 +76,7 @@ where
     };
 
     if let Ok(mut cache) = git_cache().lock() {
-        cache.insert(path.to_path_buf(), entry);
+        cache.insert(cache_key, entry);
     }
 
     fresh
@@ -101,6 +104,7 @@ where
     let entry = TimedCacheEntry {
         expires_at: Instant::now() + LANGUAGE_CACHE_TTL,
         value: fresh.clone(),
+        source_mtime: file_mtime(path),
     };
 
     if let Ok(mut cache) = language_cache().lock() {
@@ -114,7 +118,10 @@ fn get_language(path: &Path) -> Option<Option<LanguageSnapshot>> {
     let mut cache = language_cache().lock().ok()?;
     let entry = cache.get(path)?.clone();
     if Instant::now() <= entry.expires_at {
-        return Some(entry.value);
+        let current_mtime = file_mtime(path);
+        if entry.source_mtime == current_mtime {
+            return Some(entry.value);
+        }
     }
     cache.remove(path);
     None
@@ -132,6 +139,7 @@ where
     let entry = TimedCacheEntry {
         expires_at: Instant::now() + PACKAGE_CACHE_TTL,
         value: fresh.clone(),
+        source_mtime: file_mtime(path),
     };
 
     if let Ok(mut cache) = package_cache().lock() {
@@ -145,7 +153,10 @@ fn get_package_version(path: &Path) -> Option<Option<String>> {
     let mut cache = package_cache().lock().ok()?;
     let entry = cache.get(path)?.clone();
     if Instant::now() <= entry.expires_at {
-        return Some(entry.value);
+        let current_mtime = file_mtime(path);
+        if entry.source_mtime == current_mtime {
+            return Some(entry.value);
+        }
     }
     cache.remove(path);
     None
@@ -169,4 +180,27 @@ where
 fn get_repo_root(path: &Path) -> Option<Option<PathBuf>> {
     let cache = repo_root_cache().lock().ok()?;
     cache.get(path).cloned().map(Some)?
+}
+
+pub fn repo_root_for(path: &Path) -> Option<PathBuf> {
+    get_or_compute_repo_root(path, || find_repo_root(path))
+}
+
+fn find_repo_root(start: &Path) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        if dir.join(".git").exists() {
+            return Some(dir.to_path_buf());
+        }
+    }
+    None
+}
+
+fn git_cache_key(path: &Path) -> PathBuf {
+    repo_root_for(path).unwrap_or_else(|| path.to_path_buf())
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }

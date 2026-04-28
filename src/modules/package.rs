@@ -7,8 +7,13 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         return String::new();
     }
 
-    let Some(version) = get_or_compute_package_version(context.cwd.as_path(), || {
-        find_cargo_manifest_version(context.cwd.as_path())
+    let manifest_path = match find_cargo_manifest_path(context.cwd.as_path()) {
+        Some(path) => path,
+        None => return String::new(),
+    };
+
+    let Some(version) = get_or_compute_package_version(manifest_path.as_path(), || {
+        find_cargo_manifest_version_from_path(manifest_path.as_path())
     }) else {
         return String::new();
     };
@@ -21,27 +26,30 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     styled(&context.config.metadata.paneship_color, plain.as_str())
 }
 
-fn find_cargo_manifest_version(start: &std::path::Path) -> Option<String> {
+fn find_cargo_manifest_path(start: &std::path::Path) -> Option<std::path::PathBuf> {
     for dir in start.ancestors() {
         let path = dir.join("Cargo.toml");
-        if !path.is_file() {
-            continue;
-        }
-
-        let content = fs::read_to_string(path).ok()?;
-        let parsed: toml::Value = toml::from_str(content.as_str()).ok()?;
-        let version = parsed
-            .get("package")
-            .and_then(|package| package.get("version"))
-            .and_then(|version| version.as_str())?
-            .trim();
-
-        if !version.is_empty() {
-            return Some(version.to_string());
+        if path.is_file() {
+            return Some(path);
         }
     }
-
     None
+}
+
+fn find_cargo_manifest_version_from_path(path: &std::path::Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let parsed: toml::Value = toml::from_str(content.as_str()).ok()?;
+    let version = parsed
+        .get("package")
+        .and_then(|package| package.get("version"))
+        .and_then(|version| version.as_str())?
+        .trim();
+
+    if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    }
 }
 
 fn styled(color_code: &str, value: &str) -> String {
