@@ -17,22 +17,24 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     let config = &context.config.git;
 
     let mut status_tokens = status_tokens(&snapshot, config);
+    let icon_with_space = format!("{} ", config.branch_icon);
+    let icon_width = UnicodeWidthStr::width(icon_with_space.as_str());
+    let status_widths = status_tokens
+        .iter()
+        .map(|(plain, _)| UnicodeWidthStr::width(plain.as_str()))
+        .collect::<Vec<_>>();
+    let mut status_total_width = if status_tokens.is_empty() {
+        0
+    } else {
+        status_widths.iter().sum::<usize>() + (status_tokens.len().saturating_sub(1))
+    };
 
     loop {
-        let status_plain = status_tokens
-            .iter()
-            .map(|(plain, _)| plain.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        let status_width = if status_plain.is_empty() {
+        let status_width = if status_tokens.is_empty() {
             0
         } else {
-            1 + UnicodeWidthStr::width(status_plain.as_str())
+            1 + status_total_width
         };
-
-        let icon_with_space = format!("{} ", config.branch_icon);
-        let icon_width = UnicodeWidthStr::width(icon_with_space.as_str());
         let branch_budget = max_visible_width
             .saturating_sub(icon_width + status_width)
             .max(1);
@@ -67,7 +69,20 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
             );
         }
 
-        status_tokens.pop();
+        if let Some(removed) = status_tokens.pop() {
+            if let Some(width) = status_widths.get(status_tokens.len()) {
+                status_total_width = status_total_width
+                    .saturating_sub(*width)
+                    .saturating_sub(1);
+            } else {
+                status_total_width = status_tokens
+                    .iter()
+                    .map(|(plain, _)| UnicodeWidthStr::width(plain.as_str()))
+                    .sum::<usize>()
+                    .saturating_add(status_tokens.len().saturating_sub(1));
+            }
+            let _ = removed;
+        }
     }
 }
 
