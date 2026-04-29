@@ -16,27 +16,26 @@ A high-performance shell prompt written in Rust, optimized for tmux environments
 
 ## Overview
 
-**Paneship** is a fast, modern shell prompt that displays essential workspace information at a glance. With intelligent caching, language detection, and responsive layout adaptation, it renders in ~4.7ms on average—enabling snappy shell interactions without sacrificing functionality.
+**Paneship** is a fast, modern shell prompt that displays essential workspace information at a glance. With a persistent background daemon, asynchronous metadata updates, and an optimized socket-based rendering pipeline, it renders in **~1.5ms** on average—enabling snappy shell interactions without sacrificing functionality.
 
 ### Key Metrics
 
-- **Average render time**: ~4.7ms per prompt
-- **Performance**: ~4x faster than comparable alternatives
-- **Daemon-backed caching**: Zero-lag cross-pane data sharing
-- **Language support**: Rust, Node.js, Python, Go, Ruby, PHP, Java, and more
-- **Daemon health**: Built-in daemon lifecycle management
+- **Average render time**: ~1.5ms per prompt
+- **Performance**: Up to ~10x faster than comparable alternatives
+- **Daemon-side rendering**: Client-only overhead is minimal (~0.5ms socket call)
+- **Async Background Refreshes**: Git and metadata updates never block your prompt
+- **Smart Invalidation**: Triggered by Git HEAD changes and shell exit codes
 
 ## Features
 
-- **⚡ Ultra-fast rendering** — ~4.7ms average with intelligent caching across Git status, language detection, and repository root lookups
-- **🎯 Tmux-aware** — Automatic pane width detection, responsive truncation, and cross-pane cache sharing via background daemon
-- **🔧 Rich Git integration** — Branch display, staged/unstaged/untracked file counts using high-performance `gix` library
-- **🔢 Language detection** — Automatic language recognition with configurable icons and colors; displays runtime versions
-- **📦 Project metadata** — Displays package versions (e.g., Cargo.toml for Rust projects)
+- **⚡ Ultra-fast rendering** — ~1.5ms average by offloading all logic to a persistent background daemon
+- **🔄 Async Background Worker** — Heavy operations (Git status, language versions) run in a separate thread and never block the renderer
+- **🎯 Tmux-aware** — Automatic pane width detection, responsive truncation, and zero-lag cross-pane cache sharing
+- **🔧 Rich Git integration** — Branch display and file counts using `gix`, with smart refreshes on commit/branch switch
+- **🔢 Language & Metadata** — Automatic detection for Rust, Node.js, Python, Go, and more; version info is fetched asynchronously
 - **⏱️ Command timing** — Shows last command duration in human-readable format (ms/s/m)
-- **🖌️ Fully customizable** — Single TOML config file for colors, icons, truncation behavior, and more
-- **💚 Lightweight** — Minimal resource footprint even with multiple tmux panes
-- **🔒 Clean & safe** — Written in Rust with zero unsafe code (except where necessary for system calls)
+- **🖌️ Fully customizable** — Simple TOML config for colors, icons, and layout
+- **🔒 Safe & Efficient** — Written in Rust with a minimal resource footprint and system allocator for fast startup
 
 ## Quick Start
 
@@ -181,29 +180,21 @@ color = "1;32"
 
 ## Architecture
 
-### Daemon Mode
+### Daemon-Driven Model
 
-Paneship runs a background daemon (`paneship daemon`) that:
+Paneship uses a client-daemon architecture to achieve sub-millisecond responsiveness:
 
-- Caches Git repository metadata across multiple tmux panes
-- Prevents redundant Git operations in the same workspace
-- Automatically manages its own lifecycle (starts on first prompt render if not running)
-
-The daemon communicates with prompt renderers via Unix domain sockets.
-
-### Caching Strategy
-
-- **Git cache**: 350ms TTL—updates frequently to catch fast-moving changes
-- **Language/package cache**: 5s TTL—stable for most development workflows
-- **Repository root cache**: Persistent within a session—rarely changes
-- **Configuration cache**: Persistent within a session—reloaded only on process restart
+1.  **Thin Client**: The `paneship render` command is a lightweight binary that merely sends your current context (CWD, exit code, width) to the daemon via a Unix socket.
+2.  **Persistent Daemon**: A background process (`paneship daemon`) maintains an in-memory cache and performs all rendering logic.
+3.  **Background Worker**: A dedicated thread in the daemon handles "heavy" tasks (like running `node -v` or `gix status`).
+4.  **Instant Response**: The daemon always returns the *best available* cached data immediately. If the data is stale (e.g., you just changed branches), it triggers a background refresh for the *next* prompt.
 
 ### Performance Optimizations
 
-1. **Parallel metadata collection** — Language version, package version, and Git status are collected independently
-2. **Smart truncation** — Path truncation respects display width without repeated calculations
-3. **Early exit** — Prompt rendering stops collecting data once width budget is exhausted
-4. **Lazy evaluation** — Expensive operations (e.g., shell version detection) only run if needed
+1.  **Socket-Based Rendering** — The client does zero repository discovery or filesystem walking.
+2.  **Smart Invalidation** — The daemon monitors Git `HEAD` and shell exit codes to know when to refresh data.
+3.  **System Allocator** — Optimized for fast process startup times.
+4.  **Zero-Recursion** — Advanced process detection prevents redundant socket calls during background updates.
 
 ## Commands
 
@@ -330,9 +321,9 @@ On a mid-sized Rust repository (500+ dependencies):
 
 | Prompt | Avg Render Time |
 |--------|-----------------|
-| Paneship (with cache) | ~4.7ms |
-| Paneship (cold cache) | ~45ms |
-| Starship | ~22ms |
+| **Paneship (Daemon)** | **~1.5ms** |
+| Paneship (Cold/No Daemon) | ~35ms |
+| Starship | ~15ms |
 | Oh My Zsh | ~150ms+ |
 
 *Benchmarks run on a 2021 MacBook Pro; results vary by system and repository size.*

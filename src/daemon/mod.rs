@@ -68,7 +68,7 @@ pub fn run() -> std::io::Result<()> {
                     }
                 }
                 WorkerMessage::UpdateMetadata(path) => {
-                    let _ = crate::modules::metadata::compute_metadata_for_daemon(&path);
+                    crate::modules::metadata::compute_metadata_for_daemon(&path);
                 }
             }
         }
