@@ -9,11 +9,12 @@ const GIT_CACHE_TTL: Duration = Duration::from_millis(350);
 const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(30);
 const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(60);
 
-type LanguageSnapshot = (String, String);
+pub type LanguageSnapshot = (String, String);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitSnapshot {
     pub branch: String,
+    pub head_id: String,
     pub staged: usize,
     pub unstaged: usize,
     pub untracked: usize,
@@ -114,7 +115,7 @@ where
     fresh
 }
 
-fn get_language(path: &Path) -> Option<Option<LanguageSnapshot>> {
+pub fn get_language(path: &Path) -> Option<Option<LanguageSnapshot>> {
     let mut cache = language_cache().lock().ok()?;
     let entry = cache.get(path)?.clone();
     if Instant::now() <= entry.expires_at {
@@ -149,7 +150,7 @@ where
     fresh
 }
 
-fn get_package_version(path: &Path) -> Option<Option<String>> {
+pub fn get_package_version(path: &Path) -> Option<Option<String>> {
     let mut cache = package_cache().lock().ok()?;
     let entry = cache.get(path)?.clone();
     if Instant::now() <= entry.expires_at {

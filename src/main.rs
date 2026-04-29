@@ -1,3 +1,7 @@
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: std::alloc::System = std::alloc::System;
+
 mod benchmark;
 mod cache;
 mod core;
@@ -64,6 +68,24 @@ fn main() {
 
     match command {
         CliCommand::Render(options) => {
+            #[cfg(unix)]
+            {
+                let cwd = options
+                    .cwd
+                    .clone()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                let width = options.width.unwrap_or(80);
+                if let Some(mut prompt) =
+                    daemon::render(cwd, options.exit_code, width, options.duration_ms)
+                {
+                    if matches!(options.shell, RenderShell::Zsh) {
+                        prompt = core::layout::wrap_ansi_for_zsh(prompt.as_str());
+                    }
+                    print!("{prompt}");
+                    return;
+                }
+            }
+
             let context = PromptContext::from_inputs(
                 options.cwd,
                 options.width,

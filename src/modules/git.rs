@@ -115,7 +115,14 @@ fn snapshot_for_context(context: &PromptContext) -> Option<GitSnapshot> {
 
     #[cfg(unix)]
     {
-        crate::daemon::query_git(&cache_path).or_else(|| {
+        // If we are in the daemon process, we should not query the daemon via socket!
+        // We can check this by seeing if the GIT_CACHE is being populated.
+        // Or better, we can use an environment variable or a thread-local.
+        if std::env::var("PANESHIP_DAEMON").is_ok() {
+            return get_or_compute_git(&cache_path, || compute_git_status(&cache_path));
+        }
+
+        crate::daemon::query_git(&cache_path, context.exit_code).or_else(|| {
             let fresh = get_or_compute_git(&cache_path, || compute_git_status(&cache_path));
             if let Some(ref s) = fresh {
                 crate::daemon::notify_git(&cache_path, s.clone());
@@ -133,6 +140,10 @@ fn snapshot_for_context(context: &PromptContext) -> Option<GitSnapshot> {
 pub fn compute_git_status(path: &Path) -> Option<GitSnapshot> {
     let repo = gix::discover(path).ok()?;
     let head = repo.head().ok()?;
+    let head_id = head
+        .id()
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     let branch = head
         .referent_name()
         .map(|name| name.shorten().to_string())
@@ -176,8 +187,15 @@ pub fn compute_git_status(path: &Path) -> Option<GitSnapshot> {
 
     Some(GitSnapshot {
         branch,
+        head_id,
         staged,
         unstaged,
         untracked,
     })
+}
+
+pub fn get_head_id(path: &Path) -> Option<String> {
+    let repo = gix::discover(path).ok()?;
+    let head = repo.head().ok()?;
+    head.id().map(|id| id.to_string())
 }
