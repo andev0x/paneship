@@ -111,7 +111,26 @@ fn current_time_hhmm() -> Option<String> {
     }
 }
 
+pub fn compute_metadata_for_daemon(path: &Path) {
+    if let Some((name, marker)) = detect_language_marker(path) {
+        let _ = crate::cache::get_or_compute_language(marker.as_path(), || {
+            fetch_language_version(path, name.as_str(), marker.as_path())
+        });
+    }
+    crate::modules::package::compute_package_metadata_for_daemon(path);
+}
+
 fn detect_language_version(cwd: &Path) -> Option<(String, String)> {
+    #[cfg(unix)]
+    {
+        if std::env::var("PANESHIP_DAEMON").is_err() {
+            let (language, _package) = crate::daemon::query_metadata(cwd);
+            if language.is_some() {
+                return language;
+            }
+        }
+    }
+
     if let Some((name, marker)) = detect_language_marker(cwd) {
         return get_or_compute_language(marker.as_path(), || {
             fetch_language_version(cwd, name.as_str(), marker.as_path())
@@ -121,52 +140,27 @@ fn detect_language_version(cwd: &Path) -> Option<(String, String)> {
 }
 
 fn detect_language_marker(cwd: &Path) -> Option<(String, std::path::PathBuf)> {
-    if let Some(path) = find_upwards(cwd, "rust-toolchain.toml")
-        .or_else(|| find_upwards(cwd, "rust-toolchain"))
-        .or_else(|| find_upwards(cwd, "Cargo.toml"))
-    {
-        return Some(("rust".to_string(), path));
+    for dir in cwd.ancestors() {
+        if dir.join("Cargo.toml").exists() {
+            return Some(("rust".to_string(), dir.join("Cargo.toml")));
+        }
+        if dir.join("package.json").exists() {
+            return Some(("node".to_string(), dir.join("package.json")));
+        }
+        if dir.join("go.mod").exists() {
+            return Some(("go".to_string(), dir.join("go.mod")));
+        }
+        if dir.join("pyproject.toml").exists() || dir.join("requirements.txt").exists() {
+            return Some(("python".to_string(), dir.to_path_buf()));
+        }
+        // Limit search depth for performance
+        if dir.join(".git").exists()
+            || dir.to_string_lossy() == "/"
+            || dir.to_string_lossy().ends_with("/$USER")
+        {
+            break;
+        }
     }
-
-    if let Some(path) = find_upwards(cwd, "package.json") {
-        return Some(("node".to_string(), path));
-    }
-
-    if let Some(path) = find_upwards(cwd, "bun.lockb").or_else(|| find_upwards(cwd, "bun.lock")) {
-        return Some(("bun".to_string(), path));
-    }
-
-    if let Some(path) = find_upwards(cwd, "pyproject.toml")
-        .or_else(|| find_upwards(cwd, "requirements.txt"))
-        .or_else(|| find_upwards(cwd, "setup.py"))
-    {
-        return Some(("python".to_string(), path));
-    }
-
-    if let Some(path) = find_upwards(cwd, "go.mod") {
-        return Some(("go".to_string(), path));
-    }
-
-    if let Some(path) = find_upwards(cwd, "deno.json").or_else(|| find_upwards(cwd, "deno.jsonc")) {
-        return Some(("deno".to_string(), path));
-    }
-
-    if let Some(path) = find_upwards(cwd, "Gemfile").or_else(|| find_upwards(cwd, ".ruby-version"))
-    {
-        return Some(("ruby".to_string(), path));
-    }
-
-    if let Some(path) = find_upwards(cwd, "composer.json") {
-        return Some(("php".to_string(), path));
-    }
-
-    if let Some(path) = find_upwards(cwd, "pom.xml")
-        .or_else(|| find_upwards(cwd, "build.gradle"))
-        .or_else(|| find_upwards(cwd, "build.gradle.kts"))
-    {
-        return Some(("java".to_string(), path));
-    }
-
     None
 }
 
@@ -327,16 +321,6 @@ fn rust_toolchain_version_from_path(path: &Path) -> Option<String> {
         }
     }
 
-    None
-}
-
-fn find_upwards(start: &Path, file_name: &str) -> Option<std::path::PathBuf> {
-    for dir in start.ancestors() {
-        let candidate = dir.join(file_name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
     None
 }
 

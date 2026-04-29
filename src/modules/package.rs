@@ -7,6 +7,19 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         return String::new();
     }
 
+    #[cfg(unix)]
+    {
+        if std::env::var("PANESHIP_DAEMON").is_err() {
+            let (_language, package) = crate::daemon::query_metadata(context.cwd.as_path());
+            if let Some(version) = package {
+                let plain = format!("📦 v{version}");
+                if crate::core::layout::visible_width(plain.as_str()) <= max_visible_width {
+                    return styled(&context.config.metadata.paneship_color, plain.as_str());
+                }
+            }
+        }
+    }
+
     let manifest_path = match find_cargo_manifest_path(context.cwd.as_path()) {
         Some(path) => path,
         None => return String::new(),
@@ -24,6 +37,14 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     }
 
     styled(&context.config.metadata.paneship_color, plain.as_str())
+}
+
+pub fn compute_package_metadata_for_daemon(path: &std::path::Path) {
+    if let Some(manifest_path) = find_cargo_manifest_path(path) {
+        let _ = get_or_compute_package_version(manifest_path.as_path(), || {
+            find_cargo_manifest_version_from_path(manifest_path.as_path())
+        });
+    }
 }
 
 fn find_cargo_manifest_path(start: &std::path::Path) -> Option<std::path::PathBuf> {
