@@ -217,11 +217,21 @@ fn fetch_rust_version(cwd: &Path, marker_path: &Path) -> Option<String> {
 }
 
 fn fetch_command_version(cwd: &Path, cmd: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(cmd)
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .ok()?;
+    let cmd = cmd.to_string();
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let cwd = cwd.to_path_buf();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let output = Command::new(cmd).args(args).current_dir(cwd).output().ok();
+        let _ = tx.send(output);
+    });
+
+    let output = rx
+        .recv_timeout(std::time::Duration::from_millis(150))
+        .ok()
+        .flatten()?;
+
     if !output.status.success() {
         return None;
     }

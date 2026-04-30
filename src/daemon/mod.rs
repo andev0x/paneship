@@ -57,18 +57,26 @@ pub fn run() -> std::io::Result<()> {
 
     let (tx, rx) = mpsc::channel::<WorkerMessage>();
     let tx = Arc::new(Mutex::new(tx));
+    let updating = Arc::new(Mutex::new(std::collections::HashSet::<PathBuf>::new()));
 
     // Background worker thread
+    let updating_worker = Arc::clone(&updating);
     thread::spawn(move || {
         while let Ok(msg) = rx.recv() {
             match msg {
                 WorkerMessage::UpdateGit(path) => {
-                    if let Some(snapshot) = crate::modules::git::compute_git_status(&path) {
+                    if let Some(snapshot) = crate::modules::git::compute_git_status_raw(&path) {
                         crate::cache::get_or_compute_git(&path, || Some(snapshot));
+                    }
+                    if let Ok(mut set) = updating_worker.lock() {
+                        set.remove(&path);
                     }
                 }
                 WorkerMessage::UpdateMetadata(path) => {
                     crate::modules::metadata::compute_metadata_for_daemon(&path);
+                    if let Ok(mut set) = updating_worker.lock() {
+                        set.remove(&path);
+                    }
                 }
             }
         }
@@ -80,7 +88,11 @@ pub fn run() -> std::io::Result<()> {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                let _ = handle_client(&mut stream, &tx);
+                let tx = Arc::clone(&tx);
+                let updating = Arc::clone(&updating);
+                thread::spawn(move || {
+                    let _ = handle_client(&mut stream, &tx, &updating);
+                });
             }
             Err(err) => {
                 eprintln!("Error accepting connection: {}", err);
@@ -93,6 +105,7 @@ pub fn run() -> std::io::Result<()> {
 fn handle_client(
     stream: &mut UnixStream,
     tx: &Arc<Mutex<Sender<WorkerMessage>>>,
+    updating: &Arc<Mutex<std::collections::HashSet<PathBuf>>>,
 ) -> bincode::Result<()> {
     let request: Request = bincode::deserialize_from(&mut *stream)?;
     let response = match request {
@@ -100,10 +113,8 @@ fn handle_client(
             path,
             last_exit_code,
         } => {
-            let snapshot = crate::cache::get_or_compute_git(&path, || None);
+            let snapshot = crate::cache::get_git_stale(&path);
             let needs_refresh = if let Some(ref s) = snapshot {
-                // Heuristic: refresh if exit code is non-zero (something might have changed)
-                // or if HEAD has changed.
                 if last_exit_code != 0 {
                     true
                 } else {
@@ -115,8 +126,13 @@ fn handle_client(
             };
 
             if needs_refresh {
-                if let Ok(tx) = tx.lock() {
-                    let _ = tx.send(WorkerMessage::UpdateGit(path));
+                if let Ok(mut set) = updating.lock() {
+                    if !set.contains(&path) {
+                        set.insert(path.clone());
+                        if let Ok(tx) = tx.lock() {
+                            let _ = tx.send(WorkerMessage::UpdateGit(path));
+                        }
+                    }
                 }
             }
             Response::Git(snapshot)
@@ -126,8 +142,13 @@ fn handle_client(
             let package = crate::cache::get_package_version(&path).flatten();
 
             if language.is_none() && package.is_none() {
-                if let Ok(tx) = tx.lock() {
-                    let _ = tx.send(WorkerMessage::UpdateMetadata(path));
+                if let Ok(mut set) = updating.lock() {
+                    if !set.contains(&path) {
+                        set.insert(path.clone());
+                        if let Ok(tx) = tx.lock() {
+                            let _ = tx.send(WorkerMessage::UpdateMetadata(path));
+                        }
+                    }
                 }
             }
 

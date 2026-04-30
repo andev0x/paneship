@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
-const GIT_CACHE_TTL: Duration = Duration::from_millis(350);
-const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(30);
-const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(60);
+const GIT_CACHE_TTL: Duration = Duration::from_secs(5);
+const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(60);
+const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(120);
 
 pub type LanguageSnapshot = (String, String);
 
@@ -81,6 +81,11 @@ where
     }
 
     fresh
+}
+
+pub fn get_git_stale(path: &Path) -> Option<GitSnapshot> {
+    let cache = git_cache().lock().ok()?;
+    cache.get(path).and_then(|entry| entry.value.clone())
 }
 
 fn get_git(path: &Path) -> Option<Option<GitSnapshot>> {
@@ -189,6 +194,16 @@ pub fn repo_root_for(path: &Path) -> Option<PathBuf> {
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
     for dir in start.ancestors() {
+        // Check if we already know the repo root for this directory
+        if let Ok(cache) = REPO_ROOT_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            if let Some(cached) = cache.get(dir) {
+                return cached.clone();
+            }
+        }
+
         if dir.join(".git").exists() {
             return Some(dir.to_path_buf());
         }
