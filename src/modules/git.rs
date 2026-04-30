@@ -2,6 +2,7 @@ use crate::cache::{get_or_compute_git, GitSnapshot};
 use crate::core::layout::truncate_plain_to_width;
 use crate::core::prompt::PromptContext;
 use std::path::Path;
+use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
 
 pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) -> String {
@@ -138,6 +139,17 @@ fn snapshot_for_context(context: &PromptContext) -> Option<GitSnapshot> {
 }
 
 pub fn compute_git_status(path: &Path) -> Option<GitSnapshot> {
+    let path = path.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let _ = tx.send(compute_git_status_raw(&path));
+    });
+
+    rx.recv_timeout(Duration::from_millis(50)).ok().flatten()
+}
+
+pub fn compute_git_status_raw(path: &Path) -> Option<GitSnapshot> {
     let repo = gix::discover(path).ok()?;
     let head = repo.head().ok()?;
     let head_id = head
