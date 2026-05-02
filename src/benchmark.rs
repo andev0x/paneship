@@ -1,5 +1,6 @@
 use crate::core::prompt::PromptContext;
 use crate::core::renderer;
+use crate::modules::{directory, git, metadata, package, status};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -84,6 +85,81 @@ pub fn run(options: BenchmarkOptions) -> Result<BenchmarkReport, String> {
         paneship_avg,
         starship_avg,
     })
+}
+
+pub fn run_top() -> Result<(), String> {
+    let context = PromptContext::from_inputs(None, Some(80), 0, None);
+    let iterations = 100;
+
+    let mut results = vec![];
+
+    // Benchmark Directory
+    results.push((
+        "directory",
+        benchmark_module(|| {
+            directory::render_with_max_width(&context, 80);
+        }),
+    ));
+
+    // Benchmark Git
+    results.push((
+        "git",
+        benchmark_module(|| {
+            git::render_with_max_width(&context, 80);
+        }),
+    ));
+
+    // Benchmark Metadata
+    results.push((
+        "metadata",
+        benchmark_module(|| {
+            metadata::render_with_max_width(&context, 80);
+        }),
+    ));
+
+    // Benchmark Package
+    results.push((
+        "package",
+        benchmark_module(|| {
+            package::render_with_max_width(&context, 80);
+        }),
+    ));
+
+    // Benchmark Status
+    results.push((
+        "status",
+        benchmark_module(|| {
+            status::render_cursor(&context);
+        }),
+    ));
+
+    // Sort by duration descending
+    results.sort_by_key(|b| std::cmp::Reverse(b.1));
+
+    println!("{:<12} {:>16}", "Component", "Average Runtime");
+    println!("{:<12} {:>16}", "---------", "---------------");
+    for (name, duration) in results {
+        println!("{:<12} {:>16?}", name, duration / iterations);
+    }
+
+    Ok(())
+}
+
+fn benchmark_module<F>(f: F) -> Duration
+where
+    F: Fn(),
+{
+    let iterations = 100;
+    // Warm up
+    for _ in 0..10 {
+        f();
+    }
+
+    let start = Instant::now();
+    for _ in 0..iterations {
+        f();
+    }
+    start.elapsed()
 }
 
 fn benchmark_starship(options: &BenchmarkOptions) -> Result<Duration, String> {
