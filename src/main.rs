@@ -38,6 +38,7 @@ enum CliCommand {
     Init(InitOptions),
     Render(RenderOptions),
     Benchmark(BenchmarkOptions),
+    Top,
     Daemon,
     DaemonPing,
     Help,
@@ -47,6 +48,7 @@ enum CliCommand {
 #[derive(Debug, Clone)]
 enum CliCommand {
     Render(RenderOptions),
+    Top,
     Help,
 }
 
@@ -108,6 +110,12 @@ fn main() {
                 std::process::exit(1);
             }
         },
+        CliCommand::Top => {
+            if let Err(err) = benchmark::run_top() {
+                eprintln!("top benchmark failed: {err}");
+                std::process::exit(1);
+            }
+        }
         #[cfg(unix)]
         CliCommand::Daemon => {
             if let Err(err) = daemon::run() {
@@ -157,6 +165,10 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
         {
             return Err("benchmark command is only available on Unix".to_string());
         }
+    }
+
+    if matches!(args[0].as_str(), "top" | "-top") {
+        return Ok(CliCommand::Top);
     }
 
     #[cfg(unix)]
@@ -498,5 +510,5 @@ fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <plain|zsh>]\n  paneship init zsh [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship daemon [ping]\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode: plain or zsh\n\nINIT OPTIONS:\n  paneship init zsh         Print zsh init script (for eval)\n  paneship init zsh to onboarding\n                            Append paneship block to ~/.zshrc\n  paneship init zsh --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <plain|zsh>]\n  paneship init zsh [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top\n  paneship daemon [ping]\n  paneship help\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode: plain or zsh\n\nINIT OPTIONS:\n  paneship init zsh         Print zsh init script (for eval)\n  paneship init zsh to onboarding\n                            Append paneship block to ~/.zshrc\n  paneship init zsh --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
 }

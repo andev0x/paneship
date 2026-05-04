@@ -55,7 +55,7 @@ pub struct LanguageStyleConfig {
 impl Default for DirectoryConfig {
     fn default() -> Self {
         Self {
-            icon: "\u{f07b}".to_string(),
+            icon: " ".to_string(),
             truncation_length: 3,
             truncate_to_repo: true,
         }
@@ -65,9 +65,9 @@ impl Default for DirectoryConfig {
 impl Default for GitConfig {
     fn default() -> Self {
         Self {
-            branch_icon: "\u{e0a0}".to_string(),
+            branch_icon: " ".to_string(),
             staged_icon: "+".to_string(),
-            unstaged_icon: "~".to_string(),
+            unstaged_icon: "!".to_string(),
             untracked_icon: "?".to_string(),
         }
     }
@@ -76,8 +76,8 @@ impl Default for GitConfig {
 impl Default for StatusConfig {
     fn default() -> Self {
         Self {
-            success_icon: "\u{276f}".to_string(),
-            failure_icon: "\u{276f}".to_string(),
+            success_icon: "➜".to_string(),
+            failure_icon: "✗".to_string(),
         }
     }
 }
@@ -116,63 +116,63 @@ fn default_language_styles() -> HashMap<String, LanguageStyleConfig> {
     styles.insert(
         "rust".to_string(),
         LanguageStyleConfig {
-            icon: "🦀".to_string(),
+            icon: "".to_string(),
             color: "1;33".to_string(),
         },
     );
     styles.insert(
         "node".to_string(),
         LanguageStyleConfig {
-            icon: "⬢".to_string(),
+            icon: "".to_string(),
             color: "1;32".to_string(),
         },
     );
     styles.insert(
         "bun".to_string(),
         LanguageStyleConfig {
-            icon: "🥟".to_string(),
+            icon: "".to_string(),
             color: "1;38;5;208".to_string(),
         },
     );
     styles.insert(
         "python".to_string(),
         LanguageStyleConfig {
-            icon: "🐍".to_string(),
+            icon: "".to_string(),
             color: "1;34".to_string(),
         },
     );
     styles.insert(
         "go".to_string(),
         LanguageStyleConfig {
-            icon: "🐹".to_string(),
+            icon: "".to_string(),
             color: "1;36".to_string(),
         },
     );
     styles.insert(
         "deno".to_string(),
         LanguageStyleConfig {
-            icon: "🦕".to_string(),
+            icon: "".to_string(),
             color: "1;32".to_string(),
         },
     );
     styles.insert(
         "ruby".to_string(),
         LanguageStyleConfig {
-            icon: "💎".to_string(),
+            icon: "󰴭".to_string(),
             color: "1;31".to_string(),
         },
     );
     styles.insert(
         "php".to_string(),
         LanguageStyleConfig {
-            icon: "🐘".to_string(),
+            icon: "".to_string(),
             color: "1;35".to_string(),
         },
     );
     styles.insert(
         "java".to_string(),
         LanguageStyleConfig {
-            icon: "☕".to_string(),
+            icon: "".to_string(),
             color: "1;31".to_string(),
         },
     );
