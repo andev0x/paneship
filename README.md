@@ -30,6 +30,7 @@ A high-performance shell prompt written in Rust, optimized for tmux environments
 
 - **⚡ Ultra-fast rendering** — ~1.5ms average by offloading all logic to a persistent background daemon
 - **🔄 Async Background Worker** — Heavy operations (Git status, language versions) run in a separate thread and never block the renderer
+- **🐚 Broad Shell Support** — Native support for 10+ shells including Bash, Zsh, Fish, PowerShell, Nushell, and more
 - **🎯 Tmux-aware** — Automatic pane width detection, responsive truncation, and zero-lag cross-pane cache sharing
 - **🔧 Rich Git integration** — Branch display and file counts using `gix`, with smart refreshes on commit/branch switch
 - **🔢 Language & Metadata** — Automatic detection for Rust, Node.js, Python, Go, and more; version info is fetched asynchronously
@@ -57,39 +58,54 @@ cargo install --path .
 
 ### Setup
 
-#### Zsh (Recommended)
+Paneship supports **10+ shells** including `bash`, `zsh`, `fish`, `powershell`, `nushell`, `elvish`, `xonsh`, `tcsh`, `ion`, and `cmd`.
 
-Add the following line to your `~/.zshrc`:
-
+#### Automatic Setup (Recommended)
+Run the following command and restart your shell:
 ```bash
-eval "$(paneship init zsh)"
+paneship init <shell> --onboarding
+```
+*Example:* `paneship init zsh --onboarding` or `paneship init bash --onboarding`
+
+#### Manual Setup
+Add the initialization script to your shell's configuration file:
+
+**Zsh / Bash**
+Add to `~/.zshrc` or `~/.bashrc`:
+```bash
+eval "$(paneship init <zsh|bash>)"
 ```
 
-Then restart your shell:
-
-```bash
-exec zsh
+**Fish**
+Add to `~/.config/fish/config.fish`:
+```fish
+paneship init fish | source
 ```
 
-Or reload your configuration:
-
-```bash
-source ~/.zshrc
+**PowerShell**
+Add to your `$PROFILE`:
+```powershell
+Invoke-Expression (&paneship init powershell)
 ```
 
-#### Other Shells
-
-Support for Bash, Fish, and other shells is planned. For now, you can manually integrate Paneship by:
-
-1. Setting your prompt variable to call `paneship render`
-2. Capturing the last command exit code
-3. (Optional) Setting `COLUMNS` to your terminal width for responsive layout
-
-Example for Bash (basic setup):
-
-```bash
-PROMPT_COMMAND='PROMPT="$(paneship render --exit-code $? --width $COLUMNS)"'
+**Nushell**
+Add to your config:
+```nushell
+paneship init nushell | save -f ~/.cache/paneship/init.nu
 ```
+> If error
+
+```nushell
+mkdir ~/.cache/paneship
+paneship init nu | save --force ~/.cache/paneship/init.nu
+```
+
+```nushell
+# Then add `source ~/.cache/paneship/init.nu` to your config.nu
+```
+
+**Other Shells**
+Paneship also supports `elvish`, `xonsh`, `tcsh`, `ion`, and `cmd`. Use `paneship init <shell>` to generate the respective initialization scripts.
 
 ## Prompt Layout
 
@@ -204,6 +220,9 @@ Paneship uses a client-daemon architecture to achieve sub-millisecond responsive
 # Render prompt with current context
 paneship render
 
+# Render with specific shell formatting
+paneship render --shell zsh
+
 # Render with specific exit code
 paneship render --exit-code 1
 
@@ -223,8 +242,10 @@ paneship render --duration-ms 2500
 # Print shell initialization script for eval
 paneship init zsh
 
-# Append initialization to ~/.zshrc (interactive setup)
+# Append initialization to ~/.zshrc (or equivalent)
 paneship init zsh --onboarding
+
+# Supports: bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd
 ```
 
 ### Daemon Management
@@ -281,13 +302,12 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for det
 
 Potential features and improvements:
 
-- [ ] Bash and Fish shell support
-- [ ] Windows terminal support (partial Rust support exists)
 - [ ] Nix shell integration
 - [ ] User-defined prompt modules via plugins
 - [ ] Integration with system package managers for language detection
 - [ ] VSCode integrated terminal support
 - [ ] Performance profiling mode for debugging slow prompts
+- [ ] Right-side prompt support for Zsh and Fish
 
 ## Troubleshooting
 

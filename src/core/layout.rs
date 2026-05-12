@@ -57,7 +57,20 @@ pub fn strip_ansi(input: &str) -> String {
 }
 
 pub fn wrap_ansi_for_zsh(input: &str) -> String {
-    let mut output = String::with_capacity(input.len() + 16);
+    wrap_ansi_generic(input, "%{", "%}", true)
+}
+
+pub fn wrap_ansi_for_bash(input: &str) -> String {
+    wrap_ansi_generic(input, "\\[", "\\]", false)
+}
+
+fn wrap_ansi_generic(
+    input: &str,
+    start_mark: &str,
+    end_mark: &str,
+    escape_percent: bool,
+) -> String {
+    let mut output = String::with_capacity(input.len() + 32);
     let chars: Vec<char> = input.chars().collect();
     let mut idx = 0;
 
@@ -81,9 +94,9 @@ pub fn wrap_ansi_for_zsh(input: &str) -> String {
                     }
 
                     let sequence: String = chars[start..idx].iter().collect();
-                    output.push_str("%{");
+                    output.push_str(start_mark);
                     output.push_str(sequence.as_str());
-                    output.push_str("%}");
+                    output.push_str(end_mark);
                     continue;
                 }
                 ']' => {
@@ -101,23 +114,23 @@ pub fn wrap_ansi_for_zsh(input: &str) -> String {
                     }
 
                     let sequence: String = chars[start..idx].iter().collect();
-                    output.push_str("%{");
+                    output.push_str(start_mark);
                     output.push_str(sequence.as_str());
-                    output.push_str("%}");
+                    output.push_str(end_mark);
                     continue;
                 }
                 _ => {
                     let sequence: String = chars[start..idx + 1].iter().collect();
-                    output.push_str("%{");
+                    output.push_str(start_mark);
                     output.push_str(sequence.as_str());
-                    output.push_str("%}");
+                    output.push_str(end_mark);
                     idx += 1;
                     continue;
                 }
             }
         }
 
-        if chars[idx] == '%' {
+        if escape_percent && chars[idx] == '%' {
             output.push_str("%%");
         } else {
             output.push(chars[idx]);
