@@ -1,57 +1,67 @@
-
 <div align="center">
-<img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/logo-paneship.png" width="30%" alt="Paneship" />
 
+<img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/logo-paneship.png" width="32%" alt="Paneship Logo" />
 
-[![Crates.io](https://img.shields.io/crates/v/paneship?style=flat-square)](https://crates.io/crates/paneship)
-[![Docs.rs](https://img.shields.io/docsrs/paneship?style=flat-square)](https://docs.rs/paneship)
+# Paneship
+
+**A blazingly fast, high-performance shell prompt optimized for tmux and large Git repositories.**
+
+[![Crates.io](https://img.shields.io/crates/v/paneship?style=flat-square&color=orange)](https://crates.io/crates/paneship)
+[![Docs.rs](https://img.shields.io/docsrs/paneship?style=flat-square&color=blue)](https://docs.rs/paneship)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/andev0x/paneship/ci.yml?branch=main&style=flat-square)](https://github.com/andev0x/paneship/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/andev0x/paneship/ci.yml?branch=main&style=flat-square)](https://github.com/andev0x/paneship/actions)
-[![GitHub Stars](https://img.shields.io/github/stars/andev0x/paneship?style=flat-square)](https://github.com/andev0x/paneship/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/andev0x/paneship?style=flat-square&color=gold)](https://github.com/andev0x/paneship/stargazers)
 
-A high-performance shell prompt written in Rust, optimized for speed and clarity.
+---
 
-[Demo](#demo) • [Features](#features) • [Installation](#installation) • [Documentation](#documentation) • [Contributing](#contributing)
+[Key Features](#-features) • [Demo](#-demo) • [Installation](#-installation) • [Shell Setup](#-shell-setup) • [Configuration](#%EF%B8%8F-configuration) • [Architecture](#-architecture) • [Benchmarks](#-benchmarks) • [CLI Commands](#-cli-commands) • [Troubleshooting](#-troubleshooting) • [Contributing](#-contributing)
 
 </div>
 
 ---
 
-## About
+## 📖 About
 
-**Paneship** is a blazingly-fast, modern shell prompt that displays essential workspace information with minimal overhead. Powered by a persistent background daemon and asynchronous metadata updates, it renders in ~2.5ms on average—delivering snappy shell interactions without sacrificing functionality.
+**Paneship** is a modern, ultra-fast, and customizable command-line prompt utility written in Rust. It is engineered from the ground up for developers who work in terminal multiplexers (like tmux), manage large Git repositories, and demand a snappy shell interface. 
 
-Built for developers who work with large Git repositories, tmux environments, and value both speed and clarity.
+By leveraging a persistent background daemon, asynchronous Git checks, and smart cache invalidation, Paneship achieves a rendering speed of **~2.5ms**, keeping your shell highly responsive even in massive monorepos.
+
+---
 
 ## ✨ Features
 
-- **Ultra-fast rendering** (~2.5ms average) via daemon-driven architecture
-- **Async background worker** for Git status and language version detection
-- **Broad shell support** – Bash, Zsh, Fish, PowerShell, Nushell, Elvish, Xonsh, and more
-- **Tmux-aware** – Automatic pane width detection and responsive truncation
-- **Rich Git integration** – Branch name, file counts, and smart cache invalidation
-- **Language detection** – Automatic version info for Rust, Node.js, Python, Go, and more
-- **Command timing** – Last command duration in human-readable format
-- **Fully customizable** – Simple TOML configuration for colors, icons, and layout
-- **Lightweight & efficient** – Written in Rust with minimal resource footprint
+- ⚡ **Sub-millisecond Performance** – Renders in **~2.5ms** on average by using a client-daemon architecture.
+- 🔄 **Async Background Workers** – Git status checks and programming language detections run in background threads, so your prompt never blocks.
+- 🐚 **Multi-Shell Compatibility** – Native integration scripts for Zsh, Bash, Fish, PowerShell, Nushell, Elvish, Xonsh, Tcsh, Ion, and Cmd.
+- 🪟 **Tmux-Aware & Responsive** – Automatically detects tmux pane width changes and truncates long paths or metadata gracefully.
+- 🌿 **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
+- 🛠️ **Configurable & Aesthetic** – Easy-to-use TOML-based configurations. Fully supports custom icons, emojis, and Nerd Fonts.
+- 🦀 **Rust/Node/Bun/Go/Python/Deno/Ruby/PHP/Java Version Detectors** – Automatically fetches and displays active development environment versions in your metadata area.
+- ⏱️ **Command Execution Timing** – Keeps track of long-running command durations and presents them in a human-readable format (e.g., `11ms`, `1m20s`).
 
-## Demo
+---
+
+## 🎬 Demo
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/paneship.gif" width="70%" alt="Paneship Demo" />
+  <img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/paneship.gif" width="80%" alt="Paneship Demo Video" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
 </div>
 
-## Quick Start
+---
 
-### Installation
+## 🚀 Installation
 
-Install from [crates.io](https://crates.io/crates/paneship):
+### Using Cargo (Recommended)
+
+Installs the package directly from [crates.io](https://crates.io/crates/paneship):
 
 ```bash
 cargo install paneship
 ```
 
-Or build from source:
+### From Source
+
+Ensure you have Rust and Cargo installed (Rust 1.70+ is required):
 
 ```bash
 git clone https://github.com/andev0x/paneship.git
@@ -59,299 +69,275 @@ cd paneship
 cargo install --path .
 ```
 
-### Setup
+---
 
-Initialize Paneship for your shell:
+## 🐚 Shell Setup
+
+Paneship can configure itself automatically or be integrated manually.
+
+### 1. Automatic Onboarding (Recommended)
+
+Run the `init` command with the `--onboarding` flag. This will automatically detect your shell configuration file and append the necessary initialization block safely. It also handles starting the background daemon for you.
 
 ```bash
-# Automatic setup (recommended)
 paneship init <shell> --onboarding
+```
 
-# Example for Zsh
+*Example for Zsh:*
+```bash
 paneship init zsh --onboarding
 ```
 
-For manual setup, add one of the following to your shell config:
+### 2. Manual Configuration
 
-**Zsh** (~/.zshrc)
+Add the corresponding snippet to your shell configuration file. Note that manual configuration requires you to ensure the `paneship daemon` is running for optimal performance.
+
+<details>
+<summary><b>Zsh (<code>~/.zshrc</code>)</b></summary>
+
 ```bash
 eval "$(paneship init zsh)"
 ```
+</details>
 
-**Bash** (~/.bashrc)
+<details>
+<summary><b>Bash (<code>~/.bashrc</code>)</b></summary>
+
 ```bash
 eval "$(paneship init bash)"
 ```
+</details>
 
-**Fish** (~/.config/fish/config.fish)
+<details>
+<summary><b>Fish (<code>~/.config/fish/config.fish</code>)</b></summary>
+
 ```fish
 paneship init fish | source
 ```
+</details>
 
-**PowerShell** ($PROFILE)
+<details>
+<summary><b>PowerShell (<code>$PROFILE</code>)</b></summary>
+
 ```powershell
 Invoke-Expression (&paneship init powershell)
 ```
+</details>
 
-**Nushell** (config.nu)
+<details>
+<summary><b>Nushell (<code>config.nu</code>)</b></summary>
+
 ```nushell
 mkdir ~/.cache/paneship
 paneship init nushell | save --force ~/.cache/paneship/init.nu
 source ~/.cache/paneship/init.nu
 ```
+</details>
 
-For other shells (Elvish, Xonsh, Tcsh, Ion, Cmd), use `paneship init <shell>`.
+<details>
+<summary><b>Other Shells</b></summary>
 
-## Configuration
+For other supported shells (Elvish, Xonsh, Tcsh, Ion, Cmd), evaluate or source the output of:
+```bash
+paneship init <shell>
+```
+</details>
 
-Paneship reads configuration from `~/.config/paneship/config.toml`. If no file exists, sensible defaults apply.
+---
 
-### Example Config
+## ⚙️ Configuration
+
+Paneship configuration is defined in `~/.config/paneship/config.toml`. Sensible defaults are applied if this file is not present.
+
+### Default Config Structure
+
+Here is a standard setup using Nerd Font icons (requires a [Nerd Font](https://www.nerdfonts.com/)):
 
 ```toml
 [directory]
-icon = "📁"
+icon = " "
 truncation_length = 3
 truncate_to_repo = true
 
 [git]
-branch_icon = ""
+branch_icon = " "
 staged_icon = "+"
-unstaged_icon = "~"
+unstaged_icon = "!"
 untracked_icon = "?"
 
 [status]
-success_icon = "❯"
-failure_icon = "❯"
+success_icon = "➜"
+failure_icon = "✗"
 
 [metadata]
-time_color = "2;37"
-paneship_color = "1;32"
+time_color = "2;37"       # Dim white (ANSI SGR code)
+paneship_color = "1;32"   # Bright green (ANSI SGR code)
 
 [metadata.languages.rust]
-icon = "🦀"
-color = "1;33"
+icon = ""
+color = "1;33"            # Bright yellow
 
 [metadata.languages.node]
-icon = "⬢"
-color = "1;32"
+icon = ""
+color = "1;32"            # Bright green
+
+[metadata.languages.python]
+icon = ""
+color = "1;34"            # Bright blue
+
+[metadata.languages.go]
+icon = ""
+color = "1;36"            # Bright cyan
 ```
 
-### Configuration Options
+> **Note**: An emoji-based config option is available in the [example_config.toml](./example_config.toml) file.
 
-| Section | Option | Default | Description |
-|---------|--------|---------|-------------|
-| `directory` | `icon` | `""` | Symbol before directory path |
-| | `truncation_length` | `3` | Path components to display |
-| | `truncate_to_repo` | `true` | Show only repo name inside repos |
-| `git` | `branch_icon` | `""` | Symbol before branch name |
-| | `staged_icon` | `"+"` | Symbol for staged changes |
-| | `unstaged_icon` | `"~"` | Symbol for unstaged changes |
-| | `untracked_icon` | `"?"` | Symbol for untracked files |
-| `status` | `success_icon` | `"❯"` | Cursor for successful exit |
-| | `failure_icon` | `"❯"` | Cursor for failed exit |
-| `metadata` | `time_color` | `"2;37"` | ANSI color code for time |
-| | `paneship_color` | `"1;32"` | ANSI color code for metadata |
+### Configuration Reference
 
-## Prompt Layout
+#### `[directory]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `icon` | String | `" "` | Icon prefix before the path. |
+| `truncation_length` | Integer | `3` | Maximum folder depth to display before truncating. |
+| `truncate_to_repo` | Boolean | `true` | If true, automatically hides paths outside the Git repository root when inside a repo. |
 
-```
- ~/.../paneship   main ~2  ·  📦 v1.0.0                  🦀 1.95.0   󰞌 11ms   󰥔 20:56
-❯
-```
+#### `[git]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `branch_icon` | String | `" "` | Prefix icon for Git branch. |
+| `staged_icon` | String | `"+"` | Symbol representing staged changes. |
+| `unstaged_icon` | String | `"\!"` | Symbol representing unstaged changes. |
+| `untracked_icon` | String | `"?"` | Symbol representing untracked files. |
 
-**Line 1 - Left (Context):**
-- Directory (project-aware path truncation)
-- Git branch and status icons
-- Package version
+#### `[status]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `success_icon` | String | `"➜"` | Prompt cursor character on command success. |
+| `failure_icon` | String | `"✗"` | Prompt cursor character on command failure. |
 
-**Line 1 - Right (Metadata):**
-- Detected language and version
-- Last command duration
-- Current time
+#### `[metadata]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `time_color` | String | `"2;37"` | ANSI SGR color code for the current time. |
+| `paneship_color` | String | `"1;32"` | ANSI SGR color code for package version and prompt metadata. |
 
-**Line 2:**
-- Cursor character (customizable)
+---
 
-## Architecture
+## 🎨 Color Coding Reference
 
-### Daemon-Driven Design
+Paneship uses standard ANSI SGR escape sequence parameter codes for styling. You can configure styles using single values or semicolon-separated options:
 
-Paneship uses a client-daemon architecture for optimal performance:
+- `1` (Bold), `2` (Dim/Faint), `4` (Underline)
+- `30`–`37` (Standard foreground colors: Red=31, Green=32, Yellow=33, Blue=34, Magenta=35, Cyan=36, White=37)
+- `1;33` (Bold Yellow)
+- `1;38;5;208` (256-color orange foreground)
 
-1. **Thin Client** – Sends context (CWD, exit code, width) via Unix socket
-2. **Persistent Daemon** – Maintains cache and renders prompts
-3. **Background Worker** – Handles heavy operations asynchronously
-4. **Smart Invalidation** – Updates cache based on Git HEAD and exit codes
+---
 
-This design ensures the shell never blocks, and cached data is always available.
+## 🏛️ Architecture
 
-### Performance
+To prevent shell input lag, Paneship implements a lightweight **Client-Daemon-Worker** system architecture:
 
-| Prompt | Avg Render Time |
-|--------|-----------------|
-| **Paneship (Daemon)** | **~2.5ms** |
-| Paneship (Cold Start) | ~35ms |
-| Starship | ~20ms |
-| Oh My Zsh | ~150ms+ |
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as CLI Client (paneship render)
+    participant Daemon as Daemon (Background Service)
+    participant Cache as Shared Memory Cache
+    participant Worker as Background Worker
 
-*Benchmarks on 2021 MacBook Pro; results vary by system and repository size.*
-
-## Commands
-
-### Rendering
-
-```bash
-paneship render                              # Render current prompt
-paneship render --shell zsh                  # Render for specific shell
-paneship render --exit-code 1                # Render with exit code
-paneship render --cwd /path/to/project       # Render for custom directory
-paneship render --width 120                  # Render with custom width
-paneship render --duration-ms 2500           # Render with command duration
+    Client->>Daemon: Send Context (CWD, exit code, width)
+    Daemon->>Cache: Query cache for CWD & Git state
+    alt Cache Hit (valid state)
+        Cache-->>Daemon: Return cached prompt layout
+        Daemon-->>Client: Instant render response (~2ms)
+    else Cache Miss (or background refresh needed)
+        Daemon->>Worker: Trigger async check (Git status / language versions)
+        Cache-->>Daemon: Return partially cached data
+        Daemon-->>Client: Renders prompt immediately
+        Worker->>Worker: Run Gitoxide (gix) & language detection
+        Worker->>Cache: Populate / Update cache
+    end
 ```
 
-### Initialization
+### Smart Invalidation
+The background daemon listens on a local Unix domain socket. It monitors directory structure modifications, active git HEAD states, and exit statuses to automatically invalidate dirty cache entries without adding overhead to your shell prompt rendering thread.
 
-```bash
-paneship init zsh                            # Print Zsh init script
-paneship init zsh --onboarding               # Append to ~/.zshrc
-```
+---
 
-### Daemon Management
+## 📊 Benchmarks
 
-```bash
-paneship daemon                              # Start background daemon
-paneship daemon ping                         # Check daemon status
-```
+*All benchmarks executed on a 2021 MacBook Pro (M1 Pro) with a target budget of 4 tmux panes.*
 
-### Benchmarking
+| Prompt Engine | Average Render Time | Overhead / Shell Lag |
+|---------------|---------------------|----------------------|
+| **Paneship (Daemon Mode)** | **~2.5ms** | None (Imperceptible) |
+| Paneship (Cold Start) | ~35.0ms | Minimal |
+| Starship Prompt | ~20.0ms | Low |
+| Oh My Zsh (default setup) | ~150.0ms+ | High (Noticeable) |
 
-```bash
-paneship benchmark --iterations 150 --panes 4
-paneship benchmark --iterations 150 --compare-starship
-```
+---
 
-## Development
+## 🛠️ CLI Commands
 
-### Prerequisites
+### Prompt Rendering
+- `paneship render`: Renders the prompt based on default parameters.
+- `paneship render --shell zsh`: Format ANSI sequences specifically for Zsh.
+- `paneship render --exit-code 1`: Renders the prompt demonstrating a command failure.
+- `paneship render --cwd /path/to/dir`: Mock prompt rendering for a specific directory.
+- `paneship render --width 100`: Specify custom width constraints.
+- `paneship render --duration-ms 500`: Renders the prompt with a command execution duration.
 
-- Rust 1.70+
-- Cargo
+### Daemon Administration
+- `paneship daemon`: Spawns the background socket server daemon.
+- `paneship daemon ping`: Verifies that the daemon is active and responding.
 
-### Building
+### Performance Testing & Monitoring
+- `paneship benchmark`: Runs multiple prompt iterations to verify rendering speed.
+- `paneship benchmark --iterations 150 --panes 4`: Test concurrent rendering under load.
+- `paneship benchmark --compare-starship`: Run head-to-head comparison benchmarks.
+- `paneship top`: Real-time monitoring of prompt performance across all active panes.
 
-```bash
-# Build debug version
-cargo build
+---
 
-# Build release version
-cargo build --release
-```
+## 🔍 Troubleshooting
 
-### Testing
+### My prompt icons are showing as boxes or garbled text?
+Paneship defaults use Nerd Fonts for rich icon displays. Install a font from [nerdfonts.com](https://www.nerdfonts.com/) (e.g., *FiraCode Nerd Font*) and set your terminal emulator to use it. Alternatively, configure standard Unicode emojis or character symbols in `~/.config/paneship/config.toml`.
 
-```bash
-# Run all tests
-cargo test
-
-# Run tests with output
-cargo test -- --nocapture
-```
-
-### Code Quality
-
-```bash
-# Run clippy linter
-cargo clippy --all-targets -- -D warnings
-
-# Format code
-cargo fmt
-
-# Check formatting
-cargo fmt -- --check
-```
-
-### Benchmarking
-
-```bash
-cargo run --release -- benchmark --iterations 200 --panes 4
-```
-
-## Documentation
-
-- [CONTRIBUTING.md](./CONTRIBUTING.md) – Contribution guidelines
-- [Example Config](./example_config.toml) – Configuration reference
-- [Crates.io](https://crates.io/crates/paneship) – Package info
-- [Docs.rs](https://docs.rs/paneship) – API documentation
-
-## Troubleshooting
-
-### Prompt not updating
-
-Check daemon status:
+### The prompt is not showing git updates/metadata?
+Ensure that the daemon process is running. You can check it via:
 ```bash
 paneship daemon ping
 ```
+If it is not responding, you can start the daemon manually or verify your shell config eval is running correctly.
 
-Start daemon manually:
-```bash
-paneship daemon > /dev/null 2>&1 &
-```
+---
 
-### High CPU usage
+## 🗺️ Roadmap
 
-- Verify Git repository health: `git fsck`
-- Check language detection speed: `paneship render --cwd <path>`
-- Increase cache TTL in config for large monorepos
+- [ ] Nix-shell integration & environment indicator.
+- [ ] User-defined prompt modules via WASM plugins.
+- [ ] Right-side prompt (RPROMPT) rendering support for Zsh & Fish.
+- [ ] VSCode integrated terminal rendering optimization.
+- [ ] System package manager status module.
 
-### Incorrect directory display
+---
 
-Adjust `truncate_to_repo` in config:
-- `true` – Shows only repository name and relative path
-- `false` – Shows full home-relative path
+## 🤝 Contributing
 
-## Roadmap
+Contributions make the open-source community an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
-- [ ] Nix shell integration
-- [ ] User-defined prompt modules via plugins
-- [ ] System package manager integration
-- [ ] VSCode integrated terminal support
-- [ ] Performance profiling mode
-- [ ] Right-side prompt support (Zsh, Fish)
+Please review the [CONTRIBUTING.md](./CONTRIBUTING.md) guide for details on coding standards, commit messages, and the Pull Request submission process.
 
-## Contributing
+---
 
-Contributions are welcome! Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for:
+## 📄 License
 
-- How to report bugs
-- How to propose features
-- Guidelines for pull requests
-- Code style and standards
-
-## License
-
-This project is licensed under the MIT License – see [LICENSE](./LICENSE) file for details.
-
-## Acknowledgments
-
-Built with:
-- [Gitoxide (gix)](https://github.com/Byron/gitoxide) – Fast Git operations
-- [unicode-width](https://crates.io/crates/unicode-width) – Unicode width handling
-- [toml](https://crates.io/crates/toml) – Configuration parsing
-- [bincode](https://crates.io/crates/bincode) – Serialization
-
-## Support
-
-- 📝 [GitHub Discussions](https://github.com/andev0x/paneship/discussions)
-- 🐛 [GitHub Issues](https://github.com/andev0x/paneship/issues)
-- 📖 Check documentation and examples
+Distributed under the MIT License. See [LICENSE](./LICENSE) for details.
 
 ---
 
 <div align="center">
-
 Made with ❤️ by the Paneship community
-
-[⬆ back to top](#paneship)
-
 </div>

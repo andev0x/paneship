@@ -147,11 +147,26 @@ fn detect_language_marker(cwd: &Path) -> Option<(String, std::path::PathBuf)> {
         if dir.join("package.json").exists() {
             return Some(("node".to_string(), dir.join("package.json")));
         }
+        if dir.join("bun.lockb").exists() || dir.join("bunfig.toml").exists() {
+            return Some(("bun".to_string(), dir.to_path_buf()));
+        }
+        if dir.join("deno.json").exists() || dir.join("deno.jsonc").exists() {
+            return Some(("deno".to_string(), dir.to_path_buf()));
+        }
         if dir.join("go.mod").exists() {
             return Some(("go".to_string(), dir.join("go.mod")));
         }
         if dir.join("pyproject.toml").exists() || dir.join("requirements.txt").exists() {
             return Some(("python".to_string(), dir.to_path_buf()));
+        }
+        if dir.join("Gemfile").exists() {
+            return Some(("ruby".to_string(), dir.join("Gemfile")));
+        }
+        if dir.join("composer.json").exists() {
+            return Some(("php".to_string(), dir.join("composer.json")));
+        }
+        if dir.join("pom.xml").exists() || dir.join("build.gradle").exists() {
+            return Some(("java".to_string(), dir.to_path_buf()));
         }
         // Limit search depth for performance
         if dir.join(".git").exists()
