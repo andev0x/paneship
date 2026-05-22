@@ -20,7 +20,7 @@
 
 ---
 
-## 📖 About
+##  About
 
 **Paneship** is a modern, ultra-fast, and customizable command-line prompt utility written in Rust. It is engineered from the ground up for developers who work in terminal multiplexers (like tmux), manage large Git repositories, and demand a snappy shell interface. 
 
@@ -28,20 +28,20 @@ By leveraging a persistent background daemon, asynchronous Git checks, and smart
 
 ---
 
-## ✨ Features
+##  Features
 
-- ⚡ **Sub-millisecond Performance** – Renders in **~2.5ms** on average by using a client-daemon architecture.
-- 🔄 **Async Background Workers** – Git status checks and programming language detections run in background threads, so your prompt never blocks.
-- 🐚 **Multi-Shell Compatibility** – Native integration scripts for Zsh, Bash, Fish, PowerShell, Nushell, Elvish, Xonsh, Tcsh, Ion, and Cmd.
-- 🪟 **Tmux-Aware & Responsive** – Automatically detects tmux pane width changes and truncates long paths or metadata gracefully.
-- 🌿 **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
-- 🛠️ **Configurable & Aesthetic** – Easy-to-use TOML-based configurations. Fully supports custom icons, emojis, and Nerd Fonts.
-- 🦀 **Rust/Node/Bun/Go/Python/Deno/Ruby/PHP/Java Version Detectors** – Automatically fetches and displays active development environment versions in your metadata area.
-- ⏱️ **Command Execution Timing** – Keeps track of long-running command durations and presents them in a human-readable format (e.g., `11ms`, `1m20s`).
+-  **Sub-millisecond Performance** – Renders in **~2.5ms** on average by using a client-daemon architecture.
+-  **Async Background Workers** – Git status checks and programming language detections run in background threads, so your prompt never blocks.
+-  **Multi-Shell Compatibility** – Native integration scripts for Zsh, Bash, Fish, PowerShell, Nushell, Elvish, Xonsh, Tcsh, Ion, and Cmd.
+-  **Tmux-Aware & Responsive** – Automatically detects tmux pane width changes and truncates long paths or metadata gracefully.
+-  **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
+-  **Configurable & Aesthetic** – Easy-to-use TOML-based configurations. Fully supports custom icons, emojis, and Nerd Fonts.
+-  **Rust/Node/Bun/Go/Python/Deno/Ruby/PHP/Java Version Detectors** – Automatically fetches and displays active development environment versions in your metadata area.
+-  **Command Execution Timing** – Keeps track of long-running command durations and presents them in a human-readable format (e.g., `11ms`, `1m20s`).
 
 ---
 
-## 🎬 Demo
+##  Demo
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/paneship.gif" width="80%" alt="Paneship Demo Video" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
@@ -49,7 +49,7 @@ By leveraging a persistent background daemon, asynchronous Git checks, and smart
 
 ---
 
-## 🚀 Installation
+##  Installation
 
 ### Using Cargo (Recommended)
 
@@ -71,7 +71,7 @@ cargo install --path .
 
 ---
 
-## 🐚 Shell Setup
+##  Shell Setup
 
 Paneship can configure itself automatically or be integrated manually.
 
@@ -145,7 +145,7 @@ paneship init <shell>
 
 ---
 
-## ⚙️ Configuration
+##  Configuration
 
 Paneship configuration is defined in `~/.config/paneship/config.toml`. Sensible defaults are applied if this file is not present.
 
@@ -223,7 +223,7 @@ color = "1;36"            # Bright cyan
 
 ---
 
-## 🎨 Color Coding Reference
+##  Color Coding Reference
 
 Paneship uses standard ANSI SGR escape sequence parameter codes for styling. You can configure styles using single values or semicolon-separated options:
 
@@ -234,7 +234,7 @@ Paneship uses standard ANSI SGR escape sequence parameter codes for styling. You
 
 ---
 
-## 🏛️ Architecture
+##  Architecture
 
 To prevent shell input lag, Paneship implements a lightweight **Client-Daemon-Worker** system architecture:
 
@@ -265,7 +265,7 @@ The background daemon listens on a local Unix domain socket. It monitors directo
 
 ---
 
-## 📊 Benchmarks
+##  Benchmarks
 
 *All benchmarks executed on a 2021 MacBook Pro (M1 Pro) with a target budget of 4 tmux panes.*
 
@@ -278,7 +278,7 @@ The background daemon listens on a local Unix domain socket. It monitors directo
 
 ---
 
-## 🛠️ CLI Commands
+##  CLI Commands
 
 ### Prompt Rendering
 - `paneship render`: Renders the prompt based on default parameters.
@@ -300,7 +300,7 @@ The background daemon listens on a local Unix domain socket. It monitors directo
 
 ---
 
-## 🔍 Troubleshooting
+##  Troubleshooting
 
 ### My prompt icons are showing as boxes or garbled text?
 Paneship defaults use Nerd Fonts for rich icon displays. Install a font from [nerdfonts.com](https://www.nerdfonts.com/) (e.g., *FiraCode Nerd Font*) and set your terminal emulator to use it. Alternatively, configure standard Unicode emojis or character symbols in `~/.config/paneship/config.toml`.
@@ -314,17 +314,27 @@ If it is not responding, you can start the daemon manually or verify your shell 
 
 ---
 
-## 🗺️ Roadmap
+##  Roadmap
 
-- [ ] Nix-shell integration & environment indicator.
-- [ ] User-defined prompt modules via WASM plugins.
-- [ ] Right-side prompt (RPROMPT) rendering support for Zsh & Fish.
-- [ ] VSCode integrated terminal rendering optimization.
-- [ ] System package manager status module.
+### Core Enhancements
+- [ ] **Cross-Platform Daemon** – Port the Unix domain socket daemon to Windows (Named Pipes) for performance parity on PowerShell/CMD.
+- [ ] **WASM Plugin System** – Allow users to create custom prompt modules using any language that compiles to WebAssembly.
+- [ ] **Interactive Configurator** – A built-in TUI (`paneship config`) to visually customize themes and modules.
+- [ ] **Right-Side Prompt (RPROMPT)** – Native support for right-aligned metadata in Zsh, Fish, and Powerline-compatible shells.
+
+### New Modules
+- [ ] **Infrastructure Suite** – Kubernetes context/namespace, AWS profile, and Docker status modules.
+- [ ] **Nix/Direnv Integration** – Visual indicators for active Nix shells and direnv-loaded environments.
+- [ ] **System Health** – Battery status, CPU load (only when high), and memory pressure indicators.
+- [ ] **Package Manager Updates** – Background checks for pending updates in `brew`, `apt`, or `cargo`.
+
+### Developer Experience
+- [ ] **VSCode & JetBrains Integration** – Optimized rendering for integrated terminals to avoid icon clipping and alignment issues.
+- [ ] **Enhanced Onboarding** – One-click setup for more esoteric shells and WSL2 environments.
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 Contributions make the open-source community an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
@@ -332,7 +342,7 @@ Please review the [CONTRIBUTING.md](./CONTRIBUTING.md) guide for details on codi
 
 ---
 
-## 📄 License
+##  License
 
 Distributed under the MIT License. See [LICENSE](./LICENSE) for details.
 
