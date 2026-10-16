@@ -53,13 +53,13 @@ impl PromptContext {
 
         #[cfg(unix)]
         let width = width
+            // `terminal_size` is a single `ioctl` and, inside a tmux pane,
+            // already reports the pane width. Only fall back to shelling out to
+            // `tmux` when the terminal size is genuinely unavailable (e.g. the
+            // prompt is rendered with stdout redirected).
+            .or_else(|| terminal_size::terminal_size().map(|(w, _)| w.0 as usize))
             .or_else(crate::tmux::get_pane_width)
-            .unwrap_or_else(|| {
-                // Default to 80 if we can't detect terminal width
-                terminal_size::terminal_size()
-                    .map(|(w, _)| w.0 as usize)
-                    .unwrap_or(80)
-            });
+            .unwrap_or(80);
 
         #[cfg(not(unix))]
         let width = width.unwrap_or_else(|| {

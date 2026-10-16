@@ -89,7 +89,53 @@ fn read_battery() -> Option<(u8, String)> {
     None
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Read battery state on macOS via `pmset -g batt`.
+///
+/// This shells out to a platform helper (there is no stable file interface),
+/// which is why health detection runs under the looser
+/// [`super::HEALTH_TIMEOUT`] budget rather than the strict 10 ms probe budget.
+#[cfg(target_os = "macos")]
+fn read_battery() -> Option<(u8, String)> {
+    let output = std::process::Command::new("pmset")
+        .args(["-g", "batt"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_pmset_battery(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Parse the `pmset -g batt` output for the first battery percentage/status.
+///
+/// Example line: `-InternalBattery-0 (id=1234567)\t91%; discharging; 4:12 remaining`.
+fn parse_pmset_battery(text: &str) -> Option<(u8, String)> {
+    for line in text.lines() {
+        let Some(pct_index) = line.find('%') else {
+            continue;
+        };
+        let digits: String = line[..pct_index]
+            .chars()
+            .rev()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let Ok(capacity) = digits.parse::<u8>() else {
+            continue;
+        };
+        let status = line[pct_index + 1..]
+            .split(';')
+            .nth(1)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default();
+        return Some((capacity, status));
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn read_battery() -> Option<(u8, String)> {
     None
 }
@@ -114,5 +160,36 @@ mod tests {
         assert_eq!(battery_label(Some((15, "Charging".to_string()))), None);
         assert_eq!(battery_label(Some((80, "Discharging".to_string()))), None);
         assert_eq!(battery_label(None), None);
+    }
+
+    #[test]
+    fn pmset_output_parses_capacity_and_status() {
+        let discharging = "\
+Now drawing from 'Battery Power'
+ -InternalBattery-0 (id=1234567)\t76%; discharging; 4:12 remaining present: true";
+        assert_eq!(
+            parse_pmset_battery(discharging),
+            Some((76, "discharging".to_string()))
+        );
+
+        let charging = "\
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=1234567)\t100%; charging; (no estimate) present: true";
+        assert_eq!(
+            parse_pmset_battery(charging),
+            Some((100, "charging".to_string()))
+        );
+    }
+
+    #[test]
+    fn pmset_without_battery_yields_nothing() {
+        assert_eq!(parse_pmset_battery("Now drawing from 'AC Power'\n"), None);
+    }
+
+    #[test]
+    fn pmset_capacity_feeds_status_only_when_discharging() {
+        let parsed =
+            parse_pmset_battery(" -InternalBattery-0 (id=1)\t12%; discharging; 1:00 present: true");
+        assert_eq!(battery_label(parsed).as_deref(), Some("12%"));
     }
 }

@@ -94,11 +94,45 @@ fn capacity() -> NonZeroUsize {
 }
 
 fn git_ttl() -> Duration {
-    let ms = std::env::var("PANESHIP_GIT_TTL_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_GIT_TTL_MS);
-    Duration::from_millis(ms)
+    parse_ttl(
+        std::env::var("PANESHIP_GIT_TTL_MS").ok().as_deref(),
+        Duration::from_millis(DEFAULT_GIT_TTL_MS),
+    )
+}
+
+/// Resolve a TTL from an optional environment override, falling back to the
+/// compiled-in default when the value is absent or unparseable.
+///
+/// Keeping this pure (rather than reading the process environment directly)
+/// lets the parsing/fallback rules be unit-tested without mutating global state.
+fn parse_ttl(raw: Option<&str>, default: Duration) -> Duration {
+    raw.and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// TTL for language metadata (`PANESHIP_LANG_TTL_MS`).
+fn language_ttl() -> Duration {
+    parse_ttl(
+        std::env::var("PANESHIP_LANG_TTL_MS").ok().as_deref(),
+        LANGUAGE_CACHE_TTL,
+    )
+}
+
+/// TTL for package metadata (`PANESHIP_PACKAGE_TTL_MS`).
+fn package_ttl() -> Duration {
+    parse_ttl(
+        std::env::var("PANESHIP_PACKAGE_TTL_MS").ok().as_deref(),
+        PACKAGE_CACHE_TTL,
+    )
+}
+
+/// TTL for infrastructure/environment metadata (`PANESHIP_ENV_TTL_MS`).
+fn environment_ttl() -> Duration {
+    parse_ttl(
+        std::env::var("PANESHIP_ENV_TTL_MS").ok().as_deref(),
+        ENVIRONMENT_CACHE_TTL,
+    )
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -268,7 +302,7 @@ pub fn mark_language_pending(marker: &Path) {
         language_cache(),
         marker,
         None,
-        LANGUAGE_CACHE_TTL,
+        language_ttl(),
         CacheKind::Language,
     );
 }
@@ -279,7 +313,7 @@ pub fn store_language(marker: &Path, value: Option<LanguageSnapshot>) {
         language_cache(),
         marker,
         value,
-        LANGUAGE_CACHE_TTL,
+        language_ttl(),
         CacheKind::Language,
     );
 }
@@ -295,7 +329,7 @@ pub fn mark_package_pending(manifest: &Path) {
         package_cache(),
         manifest,
         None,
-        PACKAGE_CACHE_TTL,
+        package_ttl(),
         CacheKind::Package,
     );
 }
@@ -306,7 +340,7 @@ pub fn store_package(manifest: &Path, value: Option<String>) {
         package_cache(),
         manifest,
         value,
-        PACKAGE_CACHE_TTL,
+        package_ttl(),
         CacheKind::Package,
     );
 }
@@ -322,7 +356,7 @@ pub fn mark_environment_pending(path: &Path) {
         environment_cache(),
         path,
         None,
-        ENVIRONMENT_CACHE_TTL,
+        environment_ttl(),
         CacheKind::Environment,
     );
 }
@@ -333,7 +367,7 @@ pub fn store_environment(path: &Path, value: Option<EnvironmentSnapshot>) {
         environment_cache(),
         path,
         value,
-        ENVIRONMENT_CACHE_TTL,
+        environment_ttl(),
         CacheKind::Environment,
     );
 }
@@ -387,6 +421,20 @@ fn get_repo_root(path: &Path) -> Option<Option<PathBuf>> {
 /// Resolve (and cache) the repository root containing `path`.
 pub fn repo_root_for(path: &Path) -> Option<PathBuf> {
     get_or_compute_repo_root(path, || find_repo_root(path))
+}
+
+/// Drop cached repository-root resolutions for `path` and every ancestor.
+///
+/// A negative lookup (a directory that was *not* inside a repository) is cached
+/// forever for performance; without this, running `git init` — or deleting a
+/// repository — would keep showing a stale decision until LRU eviction. The
+/// daemon calls this on the post-`git` `INVALIDATE_CWD` signal, so the next
+/// render re-discovers the repository state.
+pub fn invalidate_repo_root(path: &Path) {
+    let mut cache = lock(repo_root_cache());
+    for ancestor in path.ancestors() {
+        cache.pop(ancestor);
+    }
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
@@ -622,5 +670,51 @@ mod tests {
         assert!(matches!(language_lookup(&marker), MetadataLookup::Fresh(_)));
         invalidate_metadata();
         assert!(matches!(language_lookup(&marker), MetadataLookup::Missing));
+    }
+
+    #[test]
+    fn ttl_override_parses_and_falls_back_to_default() {
+        let default = Duration::from_millis(30_000);
+        assert_eq!(
+            parse_ttl(Some("1500"), default),
+            Duration::from_millis(1500)
+        );
+        assert_eq!(
+            parse_ttl(Some("  250  "), default),
+            Duration::from_millis(250)
+        );
+        // Absent, empty, non-numeric and negative values all keep the default.
+        assert_eq!(parse_ttl(None, default), default);
+        assert_eq!(parse_ttl(Some(""), default), default);
+        assert_eq!(parse_ttl(Some("abc"), default), default);
+        assert_eq!(parse_ttl(Some("-5"), default), default);
+    }
+
+    #[test]
+    fn repo_root_invalidation_rediscovers_new_repository() {
+        let _guard = guard();
+        let dir = tmp_path("repo-root-invalidate");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // First lookup caches the negative result (no repository yet).
+        assert!(repo_root_for(&dir).is_none());
+        assert!(
+            repo_root_for(&dir).is_none(),
+            "negative result should be served from cache"
+        );
+
+        // `git init`: a repository now exists, but the cached negative wins
+        // until the invalidation hook clears it.
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        assert!(repo_root_for(&dir).is_none());
+
+        invalidate_repo_root(&dir);
+        assert_eq!(
+            repo_root_for(&dir).as_deref(),
+            Some(dir.as_path()),
+            "invalidation must force rediscovery of the new repository"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -5,12 +5,17 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   build:
-    name: Build
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
@@ -23,10 +28,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --locked
 
-      - name: Upload release artifact
+      - name: Smoke test
+        shell: bash
+        run: ./target/release/paneship --version
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: paneship-${{ runner.os }}
-          path: target/release/paneship
+          path: target/release/paneship*
+          if-no-files-found: error

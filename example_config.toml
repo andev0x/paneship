@@ -31,7 +31,9 @@ rprompt_min_width = 20
 
 # ---------------------------------------------------------------------------
 # Infrastructure / environment detectors (Phase 3). Each detector runs in a
-# background worker with a hard 10 ms budget; nothing runs on the render path.
+# background worker: file probes under a hard 10 ms budget, the opt-in health
+# check under a looser 250 ms budget because macOS shells out to `pmset`.
+# Nothing runs on the render path.
 # ---------------------------------------------------------------------------
 [environment]
 enabled = true
@@ -39,7 +41,20 @@ kubernetes = true   # ~/.kube/config / $KUBECONFIG context + namespace
 docker = true       # /.dockerenv, /proc/1/cgroup, $container
 cloud = true        # active AWS / GCP / Azure profile
 nix_direnv = true   # IN_NIX_SHELL and .envrc state
-health = false      # opt-in CPU load pressure / low battery
+health = false      # opt-in CPU load pressure / low battery (Linux + macOS)
+
+# ---------------------------------------------------------------------------
+# Cache & timeout tuning (environment variables, not TOML).
+#
+#   PANESHIP_CACHE_CAPACITY   LRU entries per cache (default 500)
+#   PANESHIP_GIT_TTL_MS       Git state TTL (default 5000)
+#   PANESHIP_LANG_TTL_MS      language metadata TTL (default 60000)
+#   PANESHIP_PACKAGE_TTL_MS   package version TTL (default 120000)
+#   PANESHIP_ENV_TTL_MS       infrastructure/environment TTL (default 30000)
+#
+# TTLs are per metadata category so slow-changing detectors (package versions)
+# can be cached far longer than fast-moving Git state.
+# ---------------------------------------------------------------------------
 
 [directory]
 # Empty = use the active icon profile.

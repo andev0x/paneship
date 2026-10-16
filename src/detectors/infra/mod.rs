@@ -28,6 +28,11 @@ pub(crate) const MAX_CONFIG_BYTES: u64 = 256 * 1024;
 /// result (the worker keeps running detached and is discarded).
 pub const DETECTOR_TIMEOUT: Duration = Duration::from_millis(10);
 
+/// Looser budget for opt-in health checks, which may shell out to a platform
+/// helper (`pmset` on macOS). Health is off by default and always resolved in
+/// the background, so it never touches the render path.
+pub const HEALTH_TIMEOUT: Duration = Duration::from_millis(250);
+
 /// Canonical key for an environment signal (icon/colour lookup key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EnvironmentKind {
@@ -120,7 +125,7 @@ pub fn detect_environment(cwd: &Path, config: &EnvironmentConfig) -> Environment
         entries.extend(bounded(move || nix::detect(&cwd)).unwrap_or_default());
     }
     if config.health {
-        entries.extend(bounded(health::detect).unwrap_or_default());
+        entries.extend(bounded_with_timeout(HEALTH_TIMEOUT, health::detect).unwrap_or_default());
     }
 
     EnvironmentSnapshot { entries }
@@ -149,6 +154,15 @@ where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
 {
+    bounded_with_timeout(DETECTOR_TIMEOUT, f)
+}
+
+/// Run `f` on a detached worker with an explicit timeout budget.
+fn bounded_with_timeout<T, F>(timeout: Duration, f: F) -> Option<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("paneship-env".to_string())
@@ -158,7 +172,7 @@ where
         })
         .ok()?;
 
-    match rx.recv_timeout(DETECTOR_TIMEOUT) {
+    match rx.recv_timeout(timeout) {
         Ok(Some(value)) => Some(value),
         _ => None,
     }
@@ -181,6 +195,15 @@ mod tests {
     #[test]
     fn bounded_returns_value_when_fast() {
         assert_eq!(bounded(|| 7), Some(7));
+    }
+
+    #[test]
+    fn bounded_with_timeout_allows_slower_work() {
+        let result = bounded_with_timeout(HEALTH_TIMEOUT, || {
+            std::thread::sleep(Duration::from_millis(20));
+            7
+        });
+        assert_eq!(result, Some(7));
     }
 
     #[test]

@@ -69,6 +69,7 @@ enum CliCommand {
     DaemonPing,
     DaemonReload,
     Invalidate(PathBuf),
+    Version,
     Help,
 }
 
@@ -188,6 +189,9 @@ fn main() {
         CliCommand::Help => {
             println!("{}", usage());
         }
+        CliCommand::Version => {
+            println!("paneship {}", env!("CARGO_PKG_VERSION"));
+        }
     }
 }
 
@@ -226,6 +230,10 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
 
     if matches!(args[0].as_str(), "help" | "--help" | "-h") {
         return Ok(CliCommand::Help);
+    }
+
+    if matches!(args[0].as_str(), "version" | "--version" | "-V") {
+        return Ok(CliCommand::Version);
     }
 
     if args[0] == "benchmark" {
@@ -479,6 +487,7 @@ fn powershell_init_script() -> String {
 fn nushell_init_script() -> String {
     [
         "$env.PANESHIP_LAST_CMD = \"\"",
+        "$env.PANESHIP_RPROMPT = \"\"",
         "$env.config = ($env.config? | default {})",
         "$env.config.hooks = ($env.config.hooks? | default {})",
         "$env.config.hooks.pre_execution = (($env.config.hooks.pre_execution? | default []) | append {||",
@@ -490,9 +499,17 @@ fn nushell_init_script() -> String {
         "        ^paneship invalidate --cwd $env.PWD | ignore",
         "    }",
         "    $env.PANESHIP_LAST_CMD = \"\"",
-        "    ^paneship render --shell nushell --exit-code $env.LAST_EXIT_CODE --width (term size).columns --cwd $env.PWD",
+        "    let rendered = (^paneship render --shell nushell --layout split --exit-code $env.LAST_EXIT_CODE --width (term size).columns --cwd $env.PWD)",
+        "    let halves = ($rendered | split row (char -i 0x1f))",
+        "    if ($halves | length) < 2 {",
+        "        $env.PANESHIP_RPROMPT = \"\"",
+        "        return $rendered",
+        "    }",
+        "    let right_and_cursor = ($halves.1 | split row \"\\n\")",
+        "    $env.PANESHIP_RPROMPT = ($right_and_cursor.0 | default \"\")",
+        "    [$halves.0, ($right_and_cursor | skip 1 | str join \"\\n\")] | str join \"\\n\"",
         "}",
-        "$env.PROMPT_COMMAND_RIGHT = \"\"",
+        "$env.PROMPT_COMMAND_RIGHT = { || $env.PANESHIP_RPROMPT }",
     ]
     .join("\n")
 }
@@ -895,5 +912,55 @@ fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>] [--layout <combined|split>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top [--once] [--json] [--benchmark]\n  paneship config\n  paneship daemon [ping|reload]\n  paneship invalidate [--cwd <path>]\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n      --layout <mode>       combined (default) or split (native RPROMPT)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison\n\nTOP OPTIONS:\n      --once                Print one daemon telemetry snapshot and exit\n      --json                Emit the telemetry snapshot as JSON\n      --benchmark           Run the local component benchmark instead"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>] [--layout <combined|split>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top [--once] [--json] [--benchmark]\n  paneship config\n  paneship daemon [ping|reload]\n  paneship invalidate [--cwd <path>]\n  paneship version\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n      --layout <mode>       combined (default) or split (native RPROMPT)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison\n\nTOP OPTIONS:\n      --once                Print one daemon telemetry snapshot and exit\n      --json                Emit the telemetry snapshot as JSON\n      --benchmark           Run the local component benchmark instead"
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_flag_is_recognised_in_every_spelling() {
+        for arg in ["version", "--version", "-V"] {
+            let command = parse_cli(vec![arg.to_string()]).expect("version should parse");
+            assert!(
+                matches!(command, CliCommand::Version),
+                "{arg} should map to Version"
+            );
+        }
+    }
+
+    #[test]
+    fn help_and_empty_args_are_handled() {
+        assert!(matches!(
+            parse_cli(vec!["--help".to_string()]).unwrap(),
+            CliCommand::Help
+        ));
+        assert!(matches!(
+            parse_cli(Vec::new()).unwrap(),
+            CliCommand::Render(_)
+        ));
+    }
+
+    #[test]
+    fn nushell_script_binds_native_right_prompt() {
+        let script = nushell_init_script();
+        assert!(
+            script.contains("--layout split"),
+            "nushell must request the structured RPROMPT layout"
+        );
+        assert!(
+            script.contains("PROMPT_COMMAND_RIGHT"),
+            "nushell must bind PROMPT_COMMAND_RIGHT"
+        );
+        assert!(script.contains("PANESHIP_RPROMPT"));
+    }
+
+    #[test]
+    fn zsh_and_fish_scripts_use_split_layout() {
+        assert!(zsh_init_script().contains("--layout split"));
+        assert!(fish_init_script().contains("--layout split"));
+        assert!(zsh_init_script().contains("RPROMPT"));
+        assert!(fish_init_script().contains("fish_right_prompt"));
+    }
 }
