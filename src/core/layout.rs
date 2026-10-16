@@ -141,12 +141,47 @@ fn wrap_ansi_generic(
     output
 }
 
+fn is_zero_width(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{200b}'..='\u{200f}' // ZWSP, ZWNJ, ZWJ, LRM, RLM
+            | '\u{2060}'        // word joiner
+            | '\u{feff}'        // zero-width no-break space / BOM
+            | '\u{fe00}'..='\u{fe0f}' // variation selectors
+            | '\u{e0100}'..='\u{e01ef}' // variation selectors supplement
+    )
+}
+
+/// Remove zero-width formatting code points that must never contribute to the
+/// printable width of a prompt segment.
+///
+/// Emoji ZWJ sequences, variation selectors and bidi marks are invisible in
+/// every terminal. If they were counted, right-aligned text (`RPROMPT`) would
+/// drift by a variable number of columns and corrupt the layout. Combining
+/// marks are already reported as width 0 by `unicode-width`, so this only drops
+/// the "invisible but width-attributed" joiners.
+pub fn strip_zero_width(input: &str) -> String {
+    if !input.chars().any(is_zero_width) {
+        return input.to_string();
+    }
+    input.chars().filter(|ch| !is_zero_width(*ch)).collect()
+}
+
+/// Printable width of `input`, ignoring ANSI escapes *and* zero-width marks.
 pub fn visible_width(input: &str) -> usize {
-    if !input.as_bytes().contains(&b'\x1b') {
+    let has_escape = input.as_bytes().contains(&b'\x1b');
+    let has_zero_width = input.chars().any(is_zero_width);
+
+    if !has_escape && !has_zero_width {
         return UnicodeWidthStr::width(input);
     }
 
-    UnicodeWidthStr::width(strip_ansi(input).as_str())
+    let stripped = if has_escape {
+        strip_ansi(input)
+    } else {
+        input.to_string()
+    };
+    UnicodeWidthStr::width(strip_zero_width(&stripped).as_str())
 }
 
 pub fn truncate_plain_to_width(input: &str, max_width: usize) -> String {
@@ -196,4 +231,42 @@ pub fn take_prefix_by_width(input: &str, max_width: usize) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_width_ignores_ansi() {
+        let styled = "\x1b[1;32mcode\x1b[0m";
+        assert_eq!(visible_width(styled), 4);
+    }
+
+    #[test]
+    fn visible_width_ignores_zero_width_joiners() {
+        // ZWJ, zero-width space and variation selectors must add no columns.
+        assert_eq!(visible_width("\u{1f468}\u{200d}\u{1f469}"), 4);
+        assert_eq!(visible_width("\u{200b}"), 0);
+        assert_eq!(visible_width("\u{fe0f}"), 0);
+        assert_eq!(visible_width("\u{2764}\u{fe0f}"), visible_width("\u{2764}"));
+    }
+
+    #[test]
+    fn strip_zero_width_removes_variation_selectors() {
+        let with_selector = "\u{2764}\u{fe0f}";
+        assert_eq!(strip_zero_width(with_selector), "\u{2764}");
+    }
+
+    #[test]
+    fn wrap_ansi_for_zsh_wraps_escape_sequences() {
+        let wrapped = wrap_ansi_for_zsh("\x1b[32mhi\x1b[0m");
+        assert_eq!(wrapped, "%{\x1b[32m%}hi%{\x1b[0m%}");
+    }
+
+    #[test]
+    fn truncate_plain_adds_ellipsis_only_when_needed() {
+        assert_eq!(truncate_plain_to_width("short", 10), "short");
+        assert_eq!(truncate_plain_to_width("truncated", 6), "tru...");
+    }
 }

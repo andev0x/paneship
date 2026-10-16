@@ -14,6 +14,8 @@ pub struct Config {
     pub metadata: MetadataConfig,
     pub icons: IconsConfig,
     pub theme: ThemeConfig,
+    pub prompt: PromptConfig,
+    pub environment: EnvironmentConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,6 +73,35 @@ pub struct ThemeConfig {
     pub name: String,
 }
 
+/// Right-side prompt (`RPROMPT`) layout (Phase 3, Module A).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptConfig {
+    /// Render the right-aligned metadata region at all.
+    pub rprompt: bool,
+    /// Minimum terminal width (columns) required to render the RPROMPT. Below
+    /// this the right region is dropped entirely rather than risking a wrap.
+    pub rprompt_min_width: usize,
+}
+
+/// Infrastructure / environment detector selection (Phase 3, Module B).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EnvironmentConfig {
+    /// Master switch for the environment segment.
+    pub enabled: bool,
+    /// Kubernetes context / namespace detection (`~/.kube/config`).
+    pub kubernetes: bool,
+    /// Container detection (`.dockerenv`, cgroup, `container` env).
+    pub docker: bool,
+    /// Active AWS/GCP/Azure profile detection.
+    pub cloud: bool,
+    /// Nix shell (`IN_NIX_SHELL`) and Direnv (`.envrc`) detection.
+    pub nix_direnv: bool,
+    /// Opt-in system health checks (load average / battery), off by default.
+    pub health: bool,
+}
+
 impl Default for DirectoryConfig {
     fn default() -> Self {
         Self {
@@ -105,6 +136,28 @@ impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             name: ThemeProfile::default().as_str().to_string(),
+        }
+    }
+}
+
+impl Default for PromptConfig {
+    fn default() -> Self {
+        Self {
+            rprompt: true,
+            rprompt_min_width: 20,
+        }
+    }
+}
+
+impl Default for EnvironmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            kubernetes: true,
+            docker: true,
+            cloud: true,
+            nix_direnv: true,
+            health: false,
         }
     }
 }
@@ -201,6 +254,16 @@ impl Config {
     /// Resolved package icon.
     pub fn package_icon(&self) -> &str {
         self.icon_profile().tokens().package
+    }
+
+    /// Resolved infrastructure/environment icon for a detector key.
+    pub fn environment_icon(&self, key: &str) -> Option<&str> {
+        self.icon_profile().tokens().environment(key)
+    }
+
+    /// Resolved infrastructure/environment colour.
+    pub fn environment_color(&self) -> &str {
+        self.theme_profile().colors().environment
     }
 
     /// Resolved time icon.

@@ -2256,6 +2256,7 @@ dependencies = [
  "toml",
  "toml_edit",
  "unicode-width",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

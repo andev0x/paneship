@@ -85,6 +85,8 @@ pub struct ProfileIcons {
     pub placeholder_git: &'static str,
     pub placeholder_lang: &'static str,
     pub languages: &'static [(&'static str, &'static str)],
+    /// Infrastructure/environment glyphs, keyed by `EnvironmentKind::key()`.
+    pub environments: &'static [(&'static str, &'static str)],
 }
 
 impl ProfileIcons {
@@ -93,6 +95,14 @@ impl ProfileIcons {
         self.languages
             .iter()
             .find(|(key, _)| *key == name)
+            .map(|(_, icon)| *icon)
+    }
+
+    /// Icon for an environment key (e.g. `"kubernetes"`), if defined.
+    pub fn environment(&self, key: &str) -> Option<&'static str> {
+        self.environments
+            .iter()
+            .find(|(name, _)| *name == key)
             .map(|(_, icon)| *icon)
     }
 }
@@ -121,6 +131,17 @@ static NERD_FONT: ProfileIcons = ProfileIcons {
         ("php", "\u{e608}"),
         ("java", "\u{e256}"),
     ],
+    environments: &[
+        ("kubernetes", "\u{f10fe}"),
+        ("docker", "\u{f308}"),
+        ("aws", "\u{e7ad}"),
+        ("gcp", "\u{e7b2}"),
+        ("azure", "\u{e754}"),
+        ("nix", "\u{f1105}"),
+        ("direnv", "\u{f0c5}"),
+        ("load", "\u{f0e4}"),
+        ("battery", "\u{f240}"),
+    ],
 };
 
 static EMOJI: ProfileIcons = ProfileIcons {
@@ -147,6 +168,17 @@ static EMOJI: ProfileIcons = ProfileIcons {
         ("php", "\u{1f418}"),
         ("java", "\u{2615}"),
     ],
+    environments: &[
+        ("kubernetes", "\u{2638}"),
+        ("docker", "\u{1f433}"),
+        ("aws", "\u{2601}"),
+        ("gcp", "\u{2601}"),
+        ("azure", "\u{2601}"),
+        ("nix", "\u{2744}"),
+        ("direnv", "\u{1f4c1}"),
+        ("load", "\u{1f525}"),
+        ("battery", "\u{1f50b}"),
+    ],
 };
 
 static MINIMAL: ProfileIcons = ProfileIcons {
@@ -172,6 +204,17 @@ static MINIMAL: ProfileIcons = ProfileIcons {
         ("ruby", "rb:"),
         ("php", "php:"),
         ("java", "java:"),
+    ],
+    environments: &[
+        ("kubernetes", "k8s:"),
+        ("docker", "docker:"),
+        ("aws", "aws:"),
+        ("gcp", "gcp:"),
+        ("azure", "az:"),
+        ("nix", "nix:"),
+        ("direnv", "direnv:"),
+        ("load", "load:"),
+        ("battery", "batt:"),
     ],
 };
 
@@ -253,6 +296,8 @@ pub struct ThemeColors {
     pub failure: &'static str,
     pub time: &'static str,
     pub paneship: &'static str,
+    /// Colour for infrastructure/environment tokens.
+    pub environment: &'static str,
     pub languages: &'static [(&'static str, &'static str)],
 }
 
@@ -276,6 +321,7 @@ static THEME_DEFAULT: ThemeColors = ThemeColors {
     failure: "31",
     time: "2;37",
     paneship: "1;32",
+    environment: "1;35",
     languages: &[
         ("rust", "1;33"),
         ("node", "1;32"),
@@ -299,6 +345,7 @@ static THEME_DRACULA: ThemeColors = ThemeColors {
     failure: "38;5;203",
     time: "38;5;103",
     paneship: "1;38;5;212",
+    environment: "38;5;141",
     languages: &[
         ("rust", "38;5;209"),
         ("node", "38;5;84"),
@@ -322,6 +369,7 @@ static THEME_NORD: ThemeColors = ThemeColors {
     failure: "38;5;174",
     time: "38;5;245",
     paneship: "1;38;5;108",
+    environment: "38;5;110",
     languages: &[
         ("rust", "38;5;216"),
         ("node", "38;5;150"),
@@ -345,6 +393,7 @@ static THEME_TOKYO_NIGHT: ThemeColors = ThemeColors {
     failure: "38;5;210",
     time: "38;5;60",
     paneship: "1;38;5;176",
+    environment: "38;5;111",
     languages: &[
         ("rust", "38;5;216"),
         ("node", "38;5;114"),
@@ -368,6 +417,7 @@ static THEME_GRUVBOX: ThemeColors = ThemeColors {
     failure: "38;5;167",
     time: "38;5;245",
     paneship: "1;38;5;142",
+    environment: "38;5;109",
     languages: &[
         ("rust", "38;5;214"),
         ("node", "38;5;142"),

@@ -40,9 +40,10 @@ impl GitWatcher {
         handle
     }
 
-    /// Register a repository root for watching (idempotent).
+    /// Register a repository root for watching (idempotent at the call site).
     pub fn watch_repo(&self, root: &Path) {
         let _ = self.tx.send(WatchCommand::Watch(root.to_path_buf()));
+        crate::daemon::telemetry::record_watcher_subscription();
     }
 }
 
@@ -55,6 +56,7 @@ fn run(
     let mut watcher =
         match notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
             let Ok(event) = event else { return };
+            crate::daemon::telemetry::record_watcher_event();
             for path in event.paths {
                 if let Some(root) = repo_root_from_git_path(&path) {
                     let _ = tx.send(WatchCommand::Changed(root));

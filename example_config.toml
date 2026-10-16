@@ -20,6 +20,27 @@ profile = "nerdfont"
 [theme]
 name = "default"
 
+# ---------------------------------------------------------------------------
+# Right-side prompt (RPROMPT, Phase 3). Native right prompts are bound by the
+# zsh/fish init scripts; the right region is dropped (and low-priority elements
+# collapse first) when the terminal is narrower than rprompt_min_width.
+# ---------------------------------------------------------------------------
+[prompt]
+rprompt = true
+rprompt_min_width = 20
+
+# ---------------------------------------------------------------------------
+# Infrastructure / environment detectors (Phase 3). Each detector runs in a
+# background worker with a hard 10 ms budget; nothing runs on the render path.
+# ---------------------------------------------------------------------------
+[environment]
+enabled = true
+kubernetes = true   # ~/.kube/config / $KUBECONFIG context + namespace
+docker = true       # /.dockerenv, /proc/1/cgroup, $container
+cloud = true        # active AWS / GCP / Azure profile
+nix_direnv = true   # IN_NIX_SHELL and .envrc state
+health = false      # opt-in CPU load pressure / low battery
+
 [directory]
 # Empty = use the active icon profile.
 icon = ""

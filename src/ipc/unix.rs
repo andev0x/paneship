@@ -89,7 +89,7 @@ impl ClientConnection {
     }
 
     /// Set the read timeout.
-    pub fn set_read_timeout(&self, timeout: Duration) -> io::Result<()> {
+    pub fn set_read_timeout(&mut self, timeout: Duration) -> io::Result<()> {
         self.inner.set_read_timeout(Some(timeout))
     }
 

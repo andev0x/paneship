@@ -134,6 +134,56 @@ pub static SECTIONS: &[Section] = &[
             kind: FieldKind::Choice(ChoiceKind::Themes),
         }],
     },
+    Section {
+        title: "Prompt",
+        fields: &[
+            FieldDef {
+                label: "Right prompt",
+                path: &["prompt", "rprompt"],
+                kind: FieldKind::Bool,
+            },
+            FieldDef {
+                label: "RPROMPT min width",
+                path: &["prompt", "rprompt_min_width"],
+                kind: FieldKind::Int { min: 10, max: 200 },
+            },
+        ],
+    },
+    Section {
+        title: "Environment",
+        fields: &[
+            FieldDef {
+                label: "Enabled",
+                path: &["environment", "enabled"],
+                kind: FieldKind::Bool,
+            },
+            FieldDef {
+                label: "Kubernetes",
+                path: &["environment", "kubernetes"],
+                kind: FieldKind::Bool,
+            },
+            FieldDef {
+                label: "Container",
+                path: &["environment", "docker"],
+                kind: FieldKind::Bool,
+            },
+            FieldDef {
+                label: "Cloud profiles",
+                path: &["environment", "cloud"],
+                kind: FieldKind::Bool,
+            },
+            FieldDef {
+                label: "Nix / Direnv",
+                path: &["environment", "nix_direnv"],
+                kind: FieldKind::Bool,
+            },
+            FieldDef {
+                label: "System health",
+                path: &["environment", "health"],
+                kind: FieldKind::Bool,
+            },
+        ],
+    },
 ];
 
 /// What the event loop should do after a key press.
@@ -236,6 +286,15 @@ impl App {
             }),
             package_state: Some(MetadataState::Ready {
                 value: "1.1.6".to_string(),
+                stale: false,
+            }),
+            environment_state: Some(MetadataState::Ready {
+                value: crate::detectors::infra::EnvironmentSnapshot {
+                    entries: vec![crate::detectors::infra::EnvironmentInfo {
+                        kind: crate::detectors::infra::EnvironmentKind::Kubernetes,
+                        label: "dev/team-a".to_string(),
+                    }],
+                },
                 stale: false,
             }),
         };
@@ -567,5 +626,18 @@ mod tests {
         let app = headless();
         let lines = app.preview();
         assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn toggling_environment_section_flips_value() {
+        let mut app = headless();
+        // Sections: Directory(0) Git(1) Status(2) Metadata(3) Icon Sets(4)
+        //           Theme(5) Prompt(6) Environment(7)
+        app.section = 7;
+        app.field = 0;
+        let before = app.get_bool(&["environment", "enabled"]).unwrap();
+        app.activate();
+        let after = app.get_bool(&["environment", "enabled"]).unwrap();
+        assert_ne!(before, after);
     }
 }

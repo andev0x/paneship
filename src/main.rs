@@ -11,6 +11,7 @@ mod ipc;
 mod modules;
 #[cfg(unix)]
 mod tmux;
+mod top;
 mod tui;
 
 use std::path::PathBuf;
@@ -25,7 +26,21 @@ struct RenderOptions {
     cwd: Option<PathBuf>,
     duration_ms: Option<u64>,
     shell: RenderShell,
+    layout: RenderLayout,
 }
+
+/// Output shape requested by the shell adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderLayout {
+    /// Left and right regions on one line, cursor on the next.
+    Combined,
+    /// `left <US> right <LF> cursor`, letting native right prompts
+    /// (`RPROMPT`/`RPS1`, `fish_right_prompt`) own the alignment.
+    Split,
+}
+
+/// Field separator used by [`RenderLayout::Split`] (ASCII unit separator).
+const RPROMPT_SEPARATOR: char = '\u{1f}';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RenderShell {
@@ -49,7 +64,7 @@ enum CliCommand {
     Render(RenderOptions),
     Benchmark(BenchmarkOptions),
     Configure,
-    Top,
+    Top(top::TopOptions),
     Daemon,
     DaemonPing,
     DaemonReload,
@@ -81,30 +96,24 @@ fn main() {
                 .clone()
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
             let width = options.width.unwrap_or(80);
-            if let Some(mut prompt) =
-                daemon::render(cwd, options.exit_code, width, options.duration_ms)
-            {
-                match options.shell {
-                    RenderShell::Zsh => prompt = core::layout::wrap_ansi_for_zsh(prompt.as_str()),
-                    RenderShell::Bash => prompt = core::layout::wrap_ansi_for_bash(prompt.as_str()),
-                    _ => {}
-                }
-                print!("{prompt}");
-                return;
-            }
 
-            let context = PromptContext::from_inputs(
-                options.cwd,
-                options.width,
-                options.exit_code,
-                options.duration_ms,
-            );
-            let mut prompt = core::renderer::render(&context);
-            match options.shell {
-                RenderShell::Zsh => prompt = core::layout::wrap_ansi_for_zsh(prompt.as_str()),
-                RenderShell::Bash => prompt = core::layout::wrap_ansi_for_bash(prompt.as_str()),
-                _ => {}
-            }
+            let parts = daemon::render(cwd, options.exit_code, width, options.duration_ms)
+                .unwrap_or_else(|| {
+                    let context = PromptContext::from_inputs(
+                        options.cwd,
+                        options.width,
+                        options.exit_code,
+                        options.duration_ms,
+                    );
+                    core::renderer::render_parts(&context)
+                });
+
+            let prompt = match options.layout {
+                RenderLayout::Combined => {
+                    apply_shell_wrapping(core::renderer::combine(&parts, width), options.shell)
+                }
+                RenderLayout::Split => render_split(&parts, options.shell),
+            };
             print!("{prompt}");
         }
         CliCommand::Benchmark(options) => {
@@ -127,9 +136,9 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        CliCommand::Top => {
-            if let Err(err) = benchmark::run_top() {
-                eprintln!("top benchmark failed: {err}");
+        CliCommand::Top(options) => {
+            if let Err(err) = top::run(&options) {
+                eprintln!("top failed: {err}");
                 std::process::exit(1);
             }
         }
@@ -182,6 +191,27 @@ fn main() {
     }
 }
 
+/// Apply the shell-specific ANSI escaping (zsh `%{ %}`, bash `\[ \]`).
+fn apply_shell_wrapping(prompt: String, shell: RenderShell) -> String {
+    match shell {
+        RenderShell::Zsh => core::layout::wrap_ansi_for_zsh(prompt.as_str()),
+        RenderShell::Bash => core::layout::wrap_ansi_for_bash(prompt.as_str()),
+        _ => prompt,
+    }
+}
+
+/// Emit the structured regions for native right prompts.
+///
+/// Wire format: `left \u{1f} right \n cursor`. Each region is ANSI-wrapped for
+/// the target shell *before* joining, so a right-aligned `RPROMPT` measures
+/// correctly even in emulators that do not understand bare escape sequences.
+fn render_split(parts: &core::renderer::PromptParts, shell: RenderShell) -> String {
+    let left = apply_shell_wrapping(parts.left.clone(), shell);
+    let right = apply_shell_wrapping(parts.right.clone(), shell);
+    let cursor = apply_shell_wrapping(parts.cursor.clone(), shell);
+    format!("{left}{RPROMPT_SEPARATOR}{right}\n{cursor}")
+}
+
 fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
     if args.is_empty() {
         return Ok(CliCommand::Render(RenderOptions {
@@ -190,6 +220,7 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
             cwd: None,
             duration_ms: None,
             shell: RenderShell::Plain,
+            layout: RenderLayout::Combined,
         }));
     }
 
@@ -209,7 +240,7 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
     }
 
     if matches!(args[0].as_str(), "top" | "-top") {
-        return Ok(CliCommand::Top);
+        return Ok(CliCommand::Top(parse_top_args(&args[1..])?));
     }
 
     if args[0] == "config" {
@@ -344,11 +375,18 @@ fn zsh_init_script() -> String {
         "        duration_arg=(--duration-ms \"$elapsed_ms\")",
         "    fi",
         "    local rendered",
-        "    rendered=\"$(\"$PANESHIP_BIN\" render --shell zsh --exit-code \"$exit_code\" --width \"${COLUMNS:-80}\" --cwd \"$PWD\" \"${duration_arg[@]}\" 2>/dev/null)\" || rendered=\"\"",
-        "    if [[ -z \"$rendered\" || \"$rendered\" != *$'\\n'* || \"$rendered\" == *$'\\n'*$'\\n'* ]]; then",
+        "    rendered=\"$(\"$PANESHIP_BIN\" render --shell zsh --layout split --exit-code \"$exit_code\" --width \"${COLUMNS:-80}\" --cwd \"$PWD\" \"${duration_arg[@]}\" 2>/dev/null)\" || rendered=\"\"",
+        "    if [[ -z \"$rendered\" || \"$rendered\" != *$'\\x1f'* ]]; then",
         "        PROMPT='%n@%m:%~ %# '",
+        "        RPROMPT=''",
         "    else",
-        "        PROMPT=\"$rendered\"",
+        "        local paneship_left=\"${rendered%%$'\\x1f'*}\"",
+        "        local paneship_rest=\"${rendered#*$'\\x1f'}\"",
+        "        local paneship_right=\"${paneship_rest%%$'\\n'*}\"",
+        "        local paneship_cursor=\"${paneship_rest#*$'\\n'}\"",
+        "        PROMPT=\"${paneship_left}",
+        "${paneship_cursor}\"",
+        "        RPROMPT=\"${paneship_right}\"",
         "    fi",
         "    PANESHIP_CMD_START=0",
         "}",
@@ -387,7 +425,23 @@ fn fish_init_script() -> String {
         "    if test -n \"$CMD_DURATION\"",
         "        set duration_arg --duration-ms \"$CMD_DURATION\"",
         "    end",
-        "    paneship render --shell fish --exit-code $exit_code --width $COLUMNS --cwd $PWD $duration_arg",
+        "    set -l rendered (paneship render --shell fish --layout split --exit-code $exit_code --width $COLUMNS --cwd $PWD $duration_arg | string collect)",
+        "    if test -z \"$rendered\"; or not string match -q -- \"*\\x1f*\" \"$rendered\"",
+        "        set -g PANESHIP_RPROMPT \"\"",
+        "        printf '%s' '> '",
+        "        return",
+        "    end",
+        "    set -l halves (string split \"\\x1f\" -- \"$rendered\")",
+        "    set -l right_and_cursor (string split \"\\n\" -- \"$halves[2]\")",
+        "    set -g PANESHIP_RPROMPT $right_and_cursor[1]",
+        "    set -l cursor (string join \"\\n\" -- $right_and_cursor[2..-1])",
+        "    printf '%s\\n%s' \"$halves[1]\" \"$cursor\"",
+        "end",
+        "",
+        "function fish_right_prompt",
+        "    if set -q PANESHIP_RPROMPT",
+        "        printf '%s' \"$PANESHIP_RPROMPT\"",
+        "    end",
         "end",
     ]
     .join("\n")
@@ -580,6 +634,7 @@ fn parse_render_args(args: &[String]) -> Result<CliCommand, String> {
         cwd: None,
         duration_ms: None,
         shell: RenderShell::Plain,
+        layout: RenderLayout::Combined,
     };
 
     let mut idx = 0;
@@ -644,6 +699,21 @@ fn parse_render_args(args: &[String]) -> Result<CliCommand, String> {
                     _ => {
                         return Err(format!(
                             "invalid shell value: {value}. Supported values: plain, bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd"
+                        ))
+                    }
+                };
+            }
+            "--layout" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "missing value for --layout".to_string())?;
+                options.layout = match value.as_str() {
+                    "combined" => RenderLayout::Combined,
+                    "split" | "rprompt" => RenderLayout::Split,
+                    _ => {
+                        return Err(format!(
+                            "invalid layout value: {value}. Supported values: combined, split"
                         ))
                     }
                 };
@@ -730,6 +800,23 @@ fn parse_benchmark_args(args: &[String]) -> Result<CliCommand, String> {
     Ok(CliCommand::Benchmark(options))
 }
 
+fn parse_top_args(args: &[String]) -> Result<top::TopOptions, String> {
+    let mut options = top::TopOptions::default();
+    for arg in args {
+        match arg.as_str() {
+            "--once" | "-1" => options.once = true,
+            "--json" => options.json = true,
+            "--benchmark" | "--local" => options.benchmark = true,
+            unknown => return Err(format!("unknown top argument: {unknown}")),
+        }
+    }
+    // JSON is always a single-shot snapshot.
+    if options.json {
+        options.once = true;
+    }
+    Ok(options)
+}
+
 fn parse_daemon_args(args: &[String]) -> Result<CliCommand, String> {
     match args {
         [] => Ok(CliCommand::Daemon),
@@ -808,5 +895,5 @@ fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top\n  paneship config\n  paneship daemon [ping|reload]\n  paneship invalidate [--cwd <path>]\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>] [--layout <combined|split>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top [--once] [--json] [--benchmark]\n  paneship config\n  paneship daemon [ping|reload]\n  paneship invalidate [--cwd <path>]\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n      --layout <mode>       combined (default) or split (native RPROMPT)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison\n\nTOP OPTIONS:\n      --once                Print one daemon telemetry snapshot and exit\n      --json                Emit the telemetry snapshot as JSON\n      --benchmark           Run the local component benchmark instead"
 }

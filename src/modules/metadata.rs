@@ -6,70 +6,110 @@
 //! segment never blocks on manifest parsing.
 
 use crate::cache::LanguageSnapshot;
-use crate::core::layout::{truncate_plain_to_width, visible_width};
+use crate::core::layout::visible_width;
 use crate::core::prompt::{MetadataState, PromptContext};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 
+/// Relative priority of each RPROMPT element. Higher values survive longer as
+/// the pane narrows: language/version is retained the longest, command timing
+/// is the first thing to collapse, then the clock.
+const PRIORITY_LANGUAGE: u8 = 100;
+const PRIORITY_TIME: u8 = 80;
+const PRIORITY_DURATION: u8 = 60;
+
+/// One candidate RPROMPT segment, with its display order and collapse priority.
+struct Candidate {
+    order: usize,
+    priority: u8,
+    styled: String,
+    width: usize,
+}
+
+impl Candidate {
+    fn new(order: usize, priority: u8, styled: String) -> Self {
+        let width = visible_width(styled.as_str());
+        Self {
+            order,
+            priority,
+            styled,
+            width,
+        }
+    }
+}
+
+/// Render the RPROMPT metadata region within `max_visible_width`, dropping the
+/// lowest-priority elements first when space is constrained.
+///
+/// Selection is priority-driven, but the surviving elements are emitted in
+/// their natural reading order (language, timing, clock).
 pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) -> String {
     if max_visible_width == 0 {
         return String::new();
     }
 
-    let mut rendered = Vec::new();
     let separator = "   ";
     let separator_width = UnicodeWidthStr::width(separator);
-    let mut current_width = 0;
 
-    for candidate in metadata_parts(context) {
-        if candidate.is_empty() {
-            continue;
-        }
+    let mut candidates: Vec<Candidate> = metadata_parts(context)
+        .into_iter()
+        .filter(|candidate| candidate.width > 0)
+        .collect();
 
-        let candidate_width = visible_width(candidate.as_str());
-        if candidate_width == 0 {
-            continue;
-        }
+    // Greedy allocation by descending priority; ties keep display order.
+    candidates.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| a.order.cmp(&b.order))
+    });
 
-        let proposed = if rendered.is_empty() {
-            candidate_width
+    let mut selected: Vec<Candidate> = Vec::new();
+    let mut used = 0usize;
+    for candidate in candidates {
+        let extra = if selected.is_empty() {
+            candidate.width
         } else {
-            current_width + separator_width + candidate_width
+            separator_width + candidate.width
         };
-
-        if proposed <= max_visible_width {
-            rendered.push(candidate);
-            current_width = proposed;
+        if used + extra <= max_visible_width {
+            used += extra;
+            selected.push(candidate);
         }
     }
 
-    let output = rendered.join(separator);
-    if output.is_empty() {
+    if selected.is_empty() {
         return String::new();
     }
 
-    if visible_width(output.as_str()) <= max_visible_width {
-        output
-    } else {
-        let plain = crate::core::layout::strip_ansi(output.as_str());
-        truncate_plain_to_width(plain.as_str(), max_visible_width)
-    }
+    selected.sort_by_key(|candidate| candidate.order);
+    selected
+        .into_iter()
+        .map(|candidate| candidate.styled)
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
-fn metadata_parts(context: &PromptContext) -> Vec<String> {
+fn metadata_parts(context: &PromptContext) -> Vec<Candidate> {
     let mut parts = Vec::new();
+    let mut order = 0;
 
     if let Some(language) = language_part(context) {
-        parts.push(language);
+        parts.push(Candidate::new(order, PRIORITY_LANGUAGE, language));
+        order += 1;
     }
 
     if let Some(duration) = render_command_duration(context) {
-        parts.push(duration);
+        parts.push(Candidate::new(order, PRIORITY_DURATION, duration));
+        order += 1;
     }
 
     if let Some(time) = current_time_hhmm() {
         let plain = format!("{} {time}", context.config.time_icon());
-        parts.push(styled(context.config.time_color(), &plain));
+        parts.push(Candidate::new(
+            order,
+            PRIORITY_TIME,
+            styled(context.config.time_color(), &plain),
+        ));
     }
 
     parts
@@ -185,6 +225,7 @@ mod tests {
             git_state: None,
             language_state: Some(state),
             package_state: Some(MetadataState::Absent),
+            environment_state: None,
         }
     }
 
@@ -214,5 +255,33 @@ mod tests {
     fn absent_renders_nothing() {
         let rendered = render_with_max_width(&context(MetadataState::Absent), 120);
         assert!(!rendered.contains("lang..."));
+    }
+
+    #[test]
+    fn narrow_width_drops_low_priority_rprompt_elements() {
+        let ready = MetadataState::Ready {
+            value: LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            },
+            stale: false,
+        };
+        let mut ctx = context(ready);
+        ctx.last_command_duration_ms = Some(123);
+
+        let wide = render_with_max_width(&ctx, 120);
+        assert!(wide.contains("1.74"), "language missing: {wide:?}");
+        assert!(wide.contains("123ms"), "duration missing: {wide:?}");
+
+        // Only enough room for the highest-priority element: the language.
+        let narrow = render_with_max_width(&ctx, 8);
+        assert!(
+            narrow.contains("1.74"),
+            "language should survive: {narrow:?}"
+        );
+        assert!(
+            !narrow.contains("123ms"),
+            "duration must collapse first: {narrow:?}"
+        );
     }
 }

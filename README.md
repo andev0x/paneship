@@ -40,6 +40,9 @@ By leveraging a persistent background daemon, asynchronous Git checks, and smart
 -  **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
 -  **Configurable & Aesthetic** – Easy-to-use TOML-based configurations. Fully supports custom icons, emojis, and Nerd Fonts.
 -  **Rust/Node/Bun/Go/Python/Deno/Ruby/PHP/Java Version Detectors** – Automatically fetches and displays active development environment versions in your metadata area.
+-  **Native Right Prompt (RPROMPT)** – Zsh (`RPROMPT`/`RPS1`) and Fish (`fish_right_prompt`) bind the width-aware right region natively; low-priority elements (timing, clock) collapse first so narrow tmux panes never wrap.
+-  **Infrastructure Detectors** – Kubernetes context/namespace, container markers, AWS/GCP/Azure profiles, and Nix/Direnv state, resolved in background workers with a hard 10 ms per-detector budget.
+-  **Live Telemetry** – `paneship top` streams daemon worker utilization, cache hit ratios and average lookup latency, LRU evictions, and filesystem-watcher throughput.
 -  **Command Execution Timing** – Keeps track of long-running command durations and presents them in a human-readable format (e.g., `11ms`, `1m20s`).
 
 ---
@@ -303,6 +306,7 @@ Detectors are isolated behind a uniform trait: adding a language means implement
 - `paneship render --cwd /path/to/dir`: Mock prompt rendering for a specific directory.
 - `paneship render --width 100`: Specify custom width constraints.
 - `paneship render --duration-ms 500`: Renders the prompt with a command execution duration.
+- `paneship render --layout split`: Emit the structured `left \u001f right \n cursor` regions used to bind native right prompts.
 
 ### Configuration
 - `paneship config`: Opens the interactive TUI configurator with a live prompt preview. `Ctrl+S` saves atomically and hot-reloads the daemon.
@@ -317,7 +321,10 @@ Detectors are isolated behind a uniform trait: adding a language means implement
 - `paneship benchmark`: Runs multiple prompt iterations to verify rendering speed.
 - `paneship benchmark --iterations 150 --panes 4`: Test concurrent rendering under load.
 - `paneship benchmark --compare-starship`: Run head-to-head comparison benchmarks.
-- `paneship top`: Real-time monitoring of prompt performance across all active panes.
+- `paneship top`: Live daemon telemetry — worker utilization, cache hit ratios and average lookup latency, LRU evictions, and watcher throughput.
+- `paneship top --once`: Print a single telemetry snapshot and exit (useful for scripts and CI).
+- `paneship top --json`: Emit the telemetry snapshot as JSON.
+- `paneship top --benchmark`: Run the local in-process component micro-benchmark instead of querying the daemon.
 
 ---
 
@@ -348,12 +355,13 @@ If it is not responding, you can start the daemon manually or verify your shell 
 - [x] **Cross-Platform Daemon** – The IPC transport is abstracted behind an `IpcListener` trait with Unix domain socket and Windows named pipe adapters.
 - [x] **Interactive Configurator** – A built-in TUI (`paneship config`) to visually customize themes and modules.
 - [ ] **WASM Plugin System** – Allow users to create custom prompt modules using any language that compiles to WebAssembly.
-- [ ] **Right-Side Prompt (RPROMPT)** – Native support for right-aligned metadata in Zsh, Fish, and Powerline-compatible shells.
+- [x] **Right-Side Prompt (RPROMPT)** – Native, width-aware right-aligned metadata in Zsh (`RPROMPT`) and Fish (`fish_right_prompt`), with priority-based collapse in narrow panes.
+- [x] **Windows Named-Pipe Hardening** – User-scoped pipe ACLs, remote-client rejection, and `ERROR_PIPE_BUSY` exponential-backoff reconnect loops.
 
 ### New Modules
-- [ ] **Infrastructure Suite** – Kubernetes context/namespace, AWS profile, and Docker status modules.
-- [ ] **Nix/Direnv Integration** – Visual indicators for active Nix shells and direnv-loaded environments.
-- [ ] **System Health** – Battery status, CPU load (only when high), and memory pressure indicators.
+- [x] **Infrastructure Suite** – Kubernetes context/namespace, container, and AWS/GCP/Azure profile detection, each capped at a 10 ms background budget.
+- [x] **Nix/Direnv Integration** – Visual indicators for active Nix shells and direnv-loaded environments.
+- [x] **System Health (opt-in)** – CPU load pressure and low-battery indicators.
 - [ ] **Package Manager Updates** – Background checks for pending updates in `brew`, `apt`, or `cargo`.
 
 ### Developer Experience

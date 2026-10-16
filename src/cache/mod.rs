@@ -5,6 +5,8 @@
 //! missing entries so callers can serve stale data immediately while a
 //! background worker refreshes it.
 
+use crate::daemon::telemetry::{self, CacheKind};
+use crate::detectors::infra::EnvironmentSnapshot;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -17,6 +19,8 @@ const DEFAULT_CACHE_CAPACITY: usize = 500;
 const DEFAULT_GIT_TTL_MS: u64 = 5_000;
 const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(60);
 const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(120);
+/// Infrastructure state changes slowly; a 30 s TTL keeps worker churn low.
+const ENVIRONMENT_CACHE_TTL: Duration = Duration::from_secs(30);
 
 /// Language/version metadata surfaced in the prompt metadata area.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,11 +75,13 @@ type GitCache = LruCache<PathBuf, GitCacheEntry>;
 type TimedCache<T> = LruCache<PathBuf, TimedCacheEntry<Option<T>>>;
 type LanguageCache = TimedCache<LanguageSnapshot>;
 type PackageCache = TimedCache<String>;
+type EnvironmentCache = TimedCache<EnvironmentSnapshot>;
 type RepoRootCache = LruCache<PathBuf, Option<PathBuf>>;
 
 static GIT_CACHE: OnceLock<Mutex<GitCache>> = OnceLock::new();
 static LANGUAGE_CACHE: OnceLock<Mutex<LanguageCache>> = OnceLock::new();
 static PACKAGE_CACHE: OnceLock<Mutex<PackageCache>> = OnceLock::new();
+static ENVIRONMENT_CACHE: OnceLock<Mutex<EnvironmentCache>> = OnceLock::new();
 static REPO_ROOT_CACHE: OnceLock<Mutex<RepoRootCache>> = OnceLock::new();
 
 fn capacity() -> NonZeroUsize {
@@ -117,24 +123,32 @@ fn package_cache() -> &'static Mutex<PackageCache> {
     PACKAGE_CACHE.get_or_init(|| Mutex::new(new_lru()))
 }
 
+fn environment_cache() -> &'static Mutex<EnvironmentCache> {
+    ENVIRONMENT_CACHE.get_or_init(|| Mutex::new(new_lru()))
+}
+
 fn repo_root_cache() -> &'static Mutex<RepoRootCache> {
     REPO_ROOT_CACHE.get_or_init(|| Mutex::new(new_lru()))
 }
 
 /// Look up the cached Git state for `path` (keyed by repository root).
 pub fn git_lookup(path: &Path) -> GitLookup {
+    let started = Instant::now();
     let key = git_cache_key(path);
     let mut cache = lock(git_cache());
     let Some(entry) = cache.get(&key) else {
+        telemetry::record_lookup(CacheKind::Git, false, started.elapsed());
         return GitLookup::Missing;
     };
 
     if Instant::now() <= entry.expires_at {
         if let Some(snapshot) = &entry.snapshot {
+            telemetry::record_lookup(CacheKind::Git, true, started.elapsed());
             return GitLookup::Fresh(snapshot.clone());
         }
     }
 
+    telemetry::record_lookup(CacheKind::Git, false, started.elapsed());
     GitLookup::Stale(entry.snapshot.clone())
 }
 
@@ -154,13 +168,24 @@ pub fn mark_git_pending(path: &Path) {
     insert_git(path, None, git_ttl());
 }
 
+/// Insert into an LRU, counting only genuine capacity evictions (not
+/// overwrites of an existing key).
+fn put_counting<V>(cache: &mut LruCache<PathBuf, V>, key: PathBuf, value: V, kind: CacheKind) {
+    let replacing = cache.contains(&key);
+    let at_capacity = cache.len() >= cache.cap().get();
+    cache.put(key, value);
+    if at_capacity && !replacing {
+        telemetry::record_eviction(kind);
+    }
+}
+
 fn insert_git(path: &Path, snapshot: Option<GitSnapshot>, ttl: Duration) {
     let key = git_cache_key(path);
     let entry = GitCacheEntry {
         snapshot,
         expires_at: Instant::now() + ttl,
     };
-    lock(git_cache()).put(key, entry);
+    put_counting(&mut lock(git_cache()), key, entry, CacheKind::Git);
 }
 
 /// Drop the Git entry for `path`'s repository, forcing a recompute.
@@ -182,71 +207,162 @@ pub enum MetadataLookup<T> {
     Missing,
 }
 
-fn lookup_metadata<T: Clone>(cache: &Mutex<TimedCache<T>>, path: &Path) -> MetadataLookup<T> {
+fn lookup_metadata<T: Clone>(
+    cache: &Mutex<TimedCache<T>>,
+    path: &Path,
+    kind: CacheKind,
+) -> MetadataLookup<T> {
+    let started = Instant::now();
     let mut guard = lock(cache);
     let Some(entry) = guard.get(path).cloned() else {
+        telemetry::record_lookup(kind, false, started.elapsed());
         return MetadataLookup::Missing;
     };
 
     if Instant::now() > entry.expires_at {
+        telemetry::record_lookup(kind, false, started.elapsed());
         return MetadataLookup::Stale(entry.value);
     }
 
     if entry.source_mtime != file_mtime(path) {
         guard.pop(path);
+        telemetry::record_lookup(kind, false, started.elapsed());
         return MetadataLookup::Missing;
     }
 
     match entry.value {
-        Some(value) => MetadataLookup::Fresh(value),
-        None => MetadataLookup::Stale(None),
+        Some(value) => {
+            telemetry::record_lookup(kind, true, started.elapsed());
+            MetadataLookup::Fresh(value)
+        }
+        None => {
+            telemetry::record_lookup(kind, false, started.elapsed());
+            MetadataLookup::Stale(None)
+        }
     }
 }
 
-fn store_metadata<T>(cache: &Mutex<TimedCache<T>>, path: &Path, value: Option<T>, ttl: Duration) {
+fn store_metadata<T>(
+    cache: &Mutex<TimedCache<T>>,
+    path: &Path,
+    value: Option<T>,
+    ttl: Duration,
+    kind: CacheKind,
+) {
     let entry = TimedCacheEntry {
         expires_at: Instant::now() + ttl,
         value,
         source_mtime: file_mtime(path),
     };
-    lock(cache).put(path.to_path_buf(), entry);
+    put_counting(&mut lock(cache), path.to_path_buf(), entry, kind);
 }
 
 /// Look up cached language metadata for a marker file.
 pub fn language_lookup(marker: &Path) -> MetadataLookup<LanguageSnapshot> {
-    lookup_metadata(language_cache(), marker)
+    lookup_metadata(language_cache(), marker, CacheKind::Language)
 }
 
 /// Record that a language marker exists but its metadata is not yet known.
 pub fn mark_language_pending(marker: &Path) {
-    store_metadata(language_cache(), marker, None, LANGUAGE_CACHE_TTL);
+    store_metadata(
+        language_cache(),
+        marker,
+        None,
+        LANGUAGE_CACHE_TTL,
+        CacheKind::Language,
+    );
 }
 
 /// Store freshly computed language metadata (or a computed negative).
 pub fn store_language(marker: &Path, value: Option<LanguageSnapshot>) {
-    store_metadata(language_cache(), marker, value, LANGUAGE_CACHE_TTL);
+    store_metadata(
+        language_cache(),
+        marker,
+        value,
+        LANGUAGE_CACHE_TTL,
+        CacheKind::Language,
+    );
 }
 
 /// Look up cached package metadata for a manifest file.
 pub fn package_lookup(manifest: &Path) -> MetadataLookup<String> {
-    lookup_metadata(package_cache(), manifest)
+    lookup_metadata(package_cache(), manifest, CacheKind::Package)
 }
 
 /// Record that a package manifest exists but its version is not yet known.
 pub fn mark_package_pending(manifest: &Path) {
-    store_metadata(package_cache(), manifest, None, PACKAGE_CACHE_TTL);
+    store_metadata(
+        package_cache(),
+        manifest,
+        None,
+        PACKAGE_CACHE_TTL,
+        CacheKind::Package,
+    );
 }
 
 /// Store a freshly computed package version (or a computed negative).
 pub fn store_package(manifest: &Path, value: Option<String>) {
-    store_metadata(package_cache(), manifest, value, PACKAGE_CACHE_TTL);
+    store_metadata(
+        package_cache(),
+        manifest,
+        value,
+        PACKAGE_CACHE_TTL,
+        CacheKind::Package,
+    );
 }
 
-/// Drop all language/package entries. Called when config is hot-reloaded so
-/// icon/theme changes and language maps take effect immediately.
+/// Look up cached environment metadata for a directory.
+pub fn environment_lookup(path: &Path) -> MetadataLookup<EnvironmentSnapshot> {
+    lookup_metadata(environment_cache(), path, CacheKind::Environment)
+}
+
+/// Record that a directory's environment is not yet known.
+pub fn mark_environment_pending(path: &Path) {
+    store_metadata(
+        environment_cache(),
+        path,
+        None,
+        ENVIRONMENT_CACHE_TTL,
+        CacheKind::Environment,
+    );
+}
+
+/// Store freshly computed environment metadata (or a computed negative).
+pub fn store_environment(path: &Path, value: Option<EnvironmentSnapshot>) {
+    store_metadata(
+        environment_cache(),
+        path,
+        value,
+        ENVIRONMENT_CACHE_TTL,
+        CacheKind::Environment,
+    );
+}
+
+/// Drop all language/package/environment entries. Called when config is
+/// hot-reloaded so icon/theme changes and detector toggles take effect.
 pub fn invalidate_metadata() {
     lock(language_cache()).clear();
     lock(package_cache()).clear();
+    lock(environment_cache()).clear();
+}
+
+/// Occupancy of each tracked cache, for the diagnostics view.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CacheSizes {
+    pub git: usize,
+    pub language: usize,
+    pub package: usize,
+    pub environment: usize,
+}
+
+/// Snapshot the current occupancy of every tracked cache.
+pub fn cache_sizes() -> CacheSizes {
+    CacheSizes {
+        git: lock(git_cache()).len(),
+        language: lock(language_cache()).len(),
+        package: lock(package_cache()).len(),
+        environment: lock(environment_cache()).len(),
+    }
 }
 
 /// Compute and cache the repository root for `path` on miss.

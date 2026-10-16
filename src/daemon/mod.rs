@@ -8,6 +8,7 @@
 
 use crate::cache::{GitLookup, GitSnapshot, LanguageSnapshot, MetadataLookup};
 use crate::core::prompt::MetadataState;
+use crate::detectors::infra::EnvironmentSnapshot;
 use crate::ipc::{self, IpcListener};
 use crate::modules::git::GitResolution;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -20,6 +21,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod log;
+pub(crate) mod telemetry;
 mod watcher;
 
 use watcher::GitWatcher;
@@ -46,27 +48,34 @@ pub enum Request {
     /// Reload `config.toml` from disk (sent by the TUI after a save).
     ReloadConfig,
     Ping,
+    /// Request a live telemetry snapshot (`paneship top`).
+    Stats,
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum Response {
     Git(GitResolution),
-    Rendered(String),
+    /// Structured prompt regions: left, right (`RPROMPT`) and cursor.
+    Rendered(crate::core::renderer::PromptParts),
     Pong,
     Ok,
+    /// Live daemon diagnostics.
+    Stats(crate::daemon::telemetry::TelemetrySnapshot),
 }
 
 enum WorkerMessage {
-    UpdateGit(PathBuf),
-    UpdateMetadata(PathBuf),
+    Git(PathBuf),
+    Metadata(PathBuf),
+    Environment(PathBuf),
 }
 
-/// Distinguishes Git and metadata refreshes so one never suppresses the other
-/// for the same working directory.
+/// Distinguishes refresh kinds so one never suppresses another for the same
+/// working directory.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum UpdateKind {
     Git,
     Metadata,
+    Environment,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -86,6 +95,13 @@ impl UpdateKey {
     fn metadata(path: &Path) -> Self {
         Self {
             kind: UpdateKind::Metadata,
+            path: path.to_path_buf(),
+        }
+    }
+
+    fn environment(path: &Path) -> Self {
+        Self {
+            kind: UpdateKind::Environment,
             path: path.to_path_buf(),
         }
     }
@@ -144,6 +160,7 @@ async fn async_main() -> io::Result<()> {
             Ok(stream) => {
                 let state = state.clone();
                 tokio::spawn(async move {
+                    let _guard = telemetry::ConnectionGuard::new();
                     if let Err(err) = handle_client(stream, state).await {
                         log::warn(format!("client handler error: {err}"));
                     }
@@ -162,17 +179,23 @@ fn spawn_worker(rx: mpsc::Receiver<WorkerMessage>, updating: UpdatingSet) {
         .name("paneship-worker".to_string())
         .spawn(move || {
             while let Ok(message) = rx.recv() {
+                let started = std::time::Instant::now();
                 let key = match message {
-                    WorkerMessage::UpdateGit(path) => {
+                    WorkerMessage::Git(path) => {
                         refresh_git(&path);
                         UpdateKey::git(&path)
                     }
-                    WorkerMessage::UpdateMetadata(path) => {
+                    WorkerMessage::Metadata(path) => {
                         refresh_metadata(&path);
                         UpdateKey::metadata(&path)
                     }
+                    WorkerMessage::Environment(path) => {
+                        refresh_environment(&path);
+                        UpdateKey::environment(&path)
+                    }
                 };
                 remove_updating(&updating, &key);
+                telemetry::record_worker_busy(started.elapsed());
             }
         });
 }
@@ -193,6 +216,7 @@ fn refresh_git(path: &Path) {
             crate::cache::mark_git_pending(path);
         }
     }
+    telemetry::record_git_refresh();
 }
 
 fn refresh_metadata(path: &Path) {
@@ -202,6 +226,20 @@ fn refresh_metadata(path: &Path) {
     if result.is_err() {
         log::error(format!("metadata worker panicked for {}", path.display()));
     }
+    telemetry::record_metadata_refresh();
+}
+
+fn refresh_environment(path: &Path) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::modules::environment::compute_environment_for_daemon(path);
+    }));
+    if result.is_err() {
+        log::error(format!(
+            "environment worker panicked for {}",
+            path.display()
+        ));
+    }
+    telemetry::record_environment_refresh();
 }
 
 fn remove_updating(updating: &UpdatingSet, key: &UpdateKey) {
@@ -215,7 +253,7 @@ fn enqueue_git_refresh(path: &Path, tx: &WorkerTx, updating: &UpdatingSet) {
     if let Ok(mut set) = updating.lock() {
         if set.insert(key) {
             if let Ok(tx) = tx.lock() {
-                let _ = tx.send(WorkerMessage::UpdateGit(path.to_path_buf()));
+                let _ = tx.send(WorkerMessage::Git(path.to_path_buf()));
             }
         }
     }
@@ -226,7 +264,18 @@ fn enqueue_metadata_refresh(path: &Path, tx: &WorkerTx, updating: &UpdatingSet) 
     if let Ok(mut set) = updating.lock() {
         if set.insert(key) {
             if let Ok(tx) = tx.lock() {
-                let _ = tx.send(WorkerMessage::UpdateMetadata(path.to_path_buf()));
+                let _ = tx.send(WorkerMessage::Metadata(path.to_path_buf()));
+            }
+        }
+    }
+}
+
+fn enqueue_environment_refresh(path: &Path, tx: &WorkerTx, updating: &UpdatingSet) {
+    let key = UpdateKey::environment(path);
+    if let Ok(mut set) = updating.lock() {
+        if set.insert(key) {
+            if let Ok(tx) = tx.lock() {
+                let _ = tx.send(WorkerMessage::Environment(path.to_path_buf()));
             }
         }
     }
@@ -255,9 +304,11 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
             width,
             duration_ms,
         } => {
+            telemetry::record_render_request();
             let resolution = resolve_git_for_render(&cwd, exit_code, &state).await;
             let language_state = resolve_language_for_render(&cwd, &state);
             let package_state = resolve_package_for_render(&cwd, &state);
+            let environment_state = resolve_environment_for_render(&cwd, &state);
             let mut context = crate::core::prompt::PromptContext::from_inputs(
                 Some(cwd),
                 Some(width),
@@ -267,7 +318,8 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
             context.git_state = Some(resolution);
             context.language_state = Some(language_state);
             context.package_state = Some(package_state);
-            Response::Rendered(crate::core::renderer::render(&context))
+            context.environment_state = Some(environment_state);
+            Response::Rendered(crate::core::renderer::render_parts(&context))
         }
         Request::NotifyGit(path, snapshot) => {
             crate::cache::set_git(&path, snapshot);
@@ -287,6 +339,7 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
             Response::Ok
         }
         Request::Ping => Response::Pong,
+        Request::Stats => Response::Stats(telemetry::snapshot()),
     };
 
     write_async(&mut stream, &response).await?;
@@ -415,12 +468,39 @@ fn resolve_package_for_render(cwd: &Path, state: &DaemonState) -> MetadataState<
     }
 }
 
+/// Resolve infrastructure/environment state for a render using the same
+/// non-blocking stale-while-revalidate pattern as language metadata.
+fn resolve_environment_for_render(
+    cwd: &Path,
+    state: &DaemonState,
+) -> MetadataState<EnvironmentSnapshot> {
+    match crate::cache::environment_lookup(cwd) {
+        MetadataLookup::Fresh(value) => MetadataState::Ready {
+            value,
+            stale: false,
+        },
+        MetadataLookup::Stale(Some(value)) => {
+            enqueue_environment_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Ready { value, stale: true }
+        }
+        MetadataLookup::Stale(None) => {
+            enqueue_environment_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Pending
+        }
+        MetadataLookup::Missing => {
+            crate::cache::mark_environment_pending(cwd);
+            enqueue_environment_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Pending
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Client API (blocking, no async runtime required)
 // ---------------------------------------------------------------------------
 
 fn connect() -> io::Result<ipc::ClientConnection> {
-    let connection = ipc::ClientConnection::connect()?;
+    let mut connection = ipc::ClientConnection::connect()?;
     let _ = connection.set_read_timeout(CLIENT_TIMEOUT);
     let _ = connection.set_write_timeout(CLIENT_TIMEOUT);
     Ok(connection)
@@ -449,13 +529,13 @@ pub fn reload_config() -> bool {
     matches!(send(&Request::ReloadConfig), Ok(Response::Ok))
 }
 
-/// Ask the daemon to render the prompt. Returns `None` when unreachable.
+/// Ask the daemon to render the prompt regions. Returns `None` when unreachable.
 pub fn render(
     cwd: PathBuf,
     exit_code: i32,
     width: usize,
     duration_ms: Option<u64>,
-) -> Option<String> {
+) -> Option<crate::core::renderer::PromptParts> {
     let request = Request::Render {
         cwd,
         exit_code,
@@ -477,6 +557,15 @@ pub fn invalidate(cwd: &Path) -> bool {
 /// Ping the daemon.
 pub fn ping() -> bool {
     matches!(send(&Request::Ping), Ok(Response::Pong))
+}
+
+/// Fetch a live telemetry snapshot for `paneship top`. Returns `None` when the
+/// daemon is unreachable.
+pub fn query_telemetry() -> Option<telemetry::TelemetrySnapshot> {
+    match send(&Request::Stats) {
+        Ok(Response::Stats(snapshot)) => Some(snapshot),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -562,11 +651,20 @@ mod tests {
 
     #[test]
     fn framed_response_round_trips() {
-        let frame = encode_message(&Response::Rendered("hello".to_string())).unwrap();
+        let parts = crate::core::renderer::PromptParts {
+            left: "left".to_string(),
+            right: "right".to_string(),
+            cursor: "> ".to_string(),
+        };
+        let frame = encode_message(&Response::Rendered(parts)).unwrap();
         let mut cursor = std::io::Cursor::new(frame);
         let decoded: Response = read_sync(&mut cursor).unwrap();
         match decoded {
-            Response::Rendered(text) => assert_eq!(text, "hello"),
+            Response::Rendered(parts) => {
+                assert_eq!(parts.left, "left");
+                assert_eq!(parts.right, "right");
+                assert_eq!(parts.cursor, "> ");
+            }
             _ => panic!("unexpected response"),
         }
     }

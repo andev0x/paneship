@@ -35,6 +35,19 @@ fn run_with_runtime(args: &[&str], runtime_dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Run an invocation and capture stdout on success.
+fn capture_with_runtime(args: &[&str], runtime_dir: &Path) -> Option<String> {
+    let output = Command::new(paneship())
+        .args(args)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 #[test]
 fn daemon_heals_stale_socket_and_serves_clients() {
     let runtime_dir = unique_runtime_dir();
@@ -98,6 +111,33 @@ fn daemon_heals_stale_socket_and_serves_clients() {
     assert!(
         reloaded,
         "daemon reload should succeed against a live daemon"
+    );
+
+    // Phase 3: a split-layout render must round-trip through the daemon and
+    // carry the RPROMPT unit-separator so native right prompts can bind.
+    let cwd = runtime_dir.to_str().unwrap();
+    let rendered = capture_with_runtime(
+        &[
+            "render", "--shell", "zsh", "--layout", "split", "--width", "80", "--cwd", cwd,
+        ],
+        &runtime_dir,
+    )
+    .expect("split render should succeed against a live daemon");
+    assert!(
+        rendered.contains('\u{1f}'),
+        "split render should contain the RPROMPT separator: {rendered:?}"
+    );
+
+    // Phase 3: `paneship top --once --json` reads the daemon telemetry stream.
+    let telemetry = capture_with_runtime(&["top", "--once", "--json"], &runtime_dir)
+        .expect("telemetry snapshot should be available");
+    assert!(
+        telemetry.contains("\"render_requests\""),
+        "telemetry JSON missing render counter: {telemetry}"
+    );
+    assert!(
+        telemetry.contains("\"worker_utilization\""),
+        "telemetry JSON missing worker utilization: {telemetry}"
     );
 
     let _ = daemon.kill();

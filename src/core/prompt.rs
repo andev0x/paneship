@@ -1,5 +1,6 @@
 use crate::cache::LanguageSnapshot;
 use crate::core::config::Config;
+use crate::detectors::infra::EnvironmentSnapshot;
 use crate::modules::git::GitResolution;
 use std::path::PathBuf;
 
@@ -36,6 +37,8 @@ pub struct PromptContext {
     pub language_state: Option<MetadataState<LanguageSnapshot>>,
     /// Package version pre-resolved by the daemon render path.
     pub package_state: Option<MetadataState<String>>,
+    /// Infrastructure/environment state pre-resolved by the daemon render path.
+    pub environment_state: Option<MetadataState<EnvironmentSnapshot>>,
 }
 
 impl PromptContext {
@@ -78,6 +81,7 @@ impl PromptContext {
             git_state: None,
             language_state: None,
             package_state: None,
+            environment_state: None,
         }
     }
 }

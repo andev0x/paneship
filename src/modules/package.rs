@@ -172,6 +172,7 @@ mod tests {
                 value: "1.2.3".to_string(),
                 stale: false,
             }),
+            environment_state: None,
         };
         let rendered = render_with_max_width(&context, 120);
         assert!(rendered.contains("1.2.3"), "missing version: {rendered:?}");

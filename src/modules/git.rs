@@ -307,6 +307,7 @@ mod tests {
             git_state,
             language_state: None,
             package_state: None,
+            environment_state: None,
         }
     }
 

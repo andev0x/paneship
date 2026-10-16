@@ -28,3 +28,11 @@ async-trait = "0.1.92"
 notify = "8.2.0"
 lru = "0.18.5"
 ratatui = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
