@@ -57,7 +57,23 @@ By leveraging a persistent background daemon, asynchronous Git checks, and smart
 
 ##  Installation
 
-### Using Cargo (Recommended)
+### One-line installer (Recommended)
+
+Downloads a prebuilt binary for your platform and falls back to building from
+source when necessary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/andev0x/paneship/main/install.sh | bash
+```
+
+Pass `--version <tag>`, `--dir <path>`, or `--from-source` to control the
+install:
+
+```bash
+./install.sh --from-source --dir "$HOME/.local/bin"
+```
+
+### Using Cargo
 
 Installs the package directly from [crates.io](https://crates.io/crates/paneship):
 
@@ -73,6 +89,12 @@ Ensure you have Rust and Cargo installed (Rust 1.70+ is required):
 git clone https://github.com/andev0x/paneship.git
 cd paneship
 cargo install --path .
+```
+
+Verify the installation:
+
+```bash
+paneship --version
 ```
 
 ---
@@ -275,7 +297,7 @@ Shell hooks also emit an explicit `INVALIDATE_CWD(path)` signal right after any 
 ### Cache & Fallback Guarantees
 Git state is held in an in-memory LRU store (default capacity: 500 working directories) with a hard 5-second TTL. When an entry expires, the daemon serves the last known value immediately while a background worker refreshes it (`stale = true`). If a repository is known but its state cannot be computed within the render budget (for example on a very large monorepo), Paneship renders an explicit `[git...]` placeholder instead of silently dropping the segment, and logs the failure to `~/.cache/paneship/daemon.log`.
 
-> Tune the cache with `PANESHIP_CACHE_CAPACITY` and the Git TTL with `PANESHIP_GIT_TTL_MS`.
+> Tune the cache with `PANESHIP_CACHE_CAPACITY`. Git TTL is set with `PANESHIP_GIT_TTL_MS`; the metadata caches are tuned per category with `PANESHIP_LANG_TTL_MS`, `PANESHIP_PACKAGE_TTL_MS` and `PANESHIP_ENV_TTL_MS`, so a slow-changing signal such as a package version can be cached far longer than fast-moving Git state.
 
 ### Non-Blocking Metadata Detection
 Language/runtime metadata follows the same stale-while-revalidate pattern. A cache miss or TTL expiry returns an explicit `[lang...]` placeholder immediately and dispatches a manifest parse to the worker pool — version extraction never runs on the render path. Parsing is **manifest-first** (via lightweight TOML/JSON readers) and spawns no external subprocesses (`node -v`, `python --version`, …).
@@ -286,18 +308,32 @@ Detectors are isolated behind a uniform trait: adding a language means implement
 
 ##  Benchmarks
 
-*All benchmarks executed on a 2021 MacBook Pro (M1 Pro) with a target budget of 4 tmux panes.*
+*Measured on an Apple Silicon (M-series) host with a target budget of 4 tmux panes; run `paneship benchmark` to reproduce.*
 
-| Prompt Engine | Average Render Time | Overhead / Shell Lag |
-|---------------|---------------------|----------------------|
-| **Paneship (Daemon Mode)** | **~2.5ms** | None (Imperceptible) |
-| Paneship (Cold Start) | ~35.0ms | Minimal |
-| Starship Prompt | ~20.0ms | Low |
-| Oh My Zsh (default setup) | ~150.0ms+ | High (Noticeable) |
+| Stage | Average | Notes |
+|-------|---------|-------|
+| **Paneship render (in-process, 4 panes)** | **~0.35ms** | `paneship benchmark` — 344µs avg, components sum to ~150µs |
+| **Daemon IPC + render round trip** | **< 1ms** | daemon-mode delta over a bare process spawn |
+| Process startup (shell `exec`) | ~8ms | fixed OS cost paid by every prompt engine |
+| Paneship (cold start, no daemon) | ~35.0ms | bounded first-render Git compute |
+| Starship Prompt | ~20.0ms | |
+| Oh My Zsh (default setup) | ~150.0ms+ | noticeable lag |
+
+The render path is well inside the **2.5ms** budget: the expensive work (Git
+`gix` status, manifest parsing, infrastructure probes) runs in background
+workers, and the daemon serves cached regions over a local socket.
+
+> The `benchmark` harness pins a fixed width. Passing no width would make
+> `PromptContext` probe the terminal/`tmux`, so the timer would measure a
+> subprocess spawn instead of the render path.
 
 ---
 
 ##  CLI Commands
+
+### General
+- `paneship --version`: Print the installed version and exit.
+- `paneship help`: Print usage and exit.
 
 ### Prompt Rendering
 - `paneship render`: Renders the prompt based on default parameters.
@@ -321,7 +357,7 @@ Detectors are isolated behind a uniform trait: adding a language means implement
 - `paneship benchmark`: Runs multiple prompt iterations to verify rendering speed.
 - `paneship benchmark --iterations 150 --panes 4`: Test concurrent rendering under load.
 - `paneship benchmark --compare-starship`: Run head-to-head comparison benchmarks.
-- `paneship top`: Live daemon telemetry — worker utilization, cache hit ratios and average lookup latency, LRU evictions, and watcher throughput.
+- `paneship top`: Live daemon telemetry — worker utilization, cache hit ratios and average lookup latency, LRU evictions, watcher throughput, and a rolling (8-sample) render/git/event rate.
 - `paneship top --once`: Print a single telemetry snapshot and exit (useful for scripts and CI).
 - `paneship top --json`: Emit the telemetry snapshot as JSON.
 - `paneship top --benchmark`: Run the local in-process component micro-benchmark instead of querying the daemon.
@@ -355,16 +391,18 @@ If it is not responding, you can start the daemon manually or verify your shell 
 - [x] **Cross-Platform Daemon** – The IPC transport is abstracted behind an `IpcListener` trait with Unix domain socket and Windows named pipe adapters.
 - [x] **Interactive Configurator** – A built-in TUI (`paneship config`) to visually customize themes and modules.
 - [ ] **WASM Plugin System** – Allow users to create custom prompt modules using any language that compiles to WebAssembly.
-- [x] **Right-Side Prompt (RPROMPT)** – Native, width-aware right-aligned metadata in Zsh (`RPROMPT`) and Fish (`fish_right_prompt`), with priority-based collapse in narrow panes.
+- [x] **Right-Side Prompt (RPROMPT)** – Native, width-aware right-aligned metadata in Zsh (`RPROMPT`), Fish (`fish_right_prompt`) and Nushell (`PROMPT_COMMAND_RIGHT`), with priority-based collapse in narrow panes.
 - [x] **Windows Named-Pipe Hardening** – User-scoped pipe ACLs, remote-client rejection, and `ERROR_PIPE_BUSY` exponential-backoff reconnect loops.
 
 ### New Modules
 - [x] **Infrastructure Suite** – Kubernetes context/namespace, container, and AWS/GCP/Azure profile detection, each capped at a 10 ms background budget.
 - [x] **Nix/Direnv Integration** – Visual indicators for active Nix shells and direnv-loaded environments.
-- [x] **System Health (opt-in)** – CPU load pressure and low-battery indicators.
+- [x] **System Health (opt-in)** – CPU load pressure and low-battery indicators (Linux `/sys` and macOS `pmset`).
+- [x] **Per-Detector Cache TTLs** – Independent TTLs for Git, language, package and environment caches via `PANESHIP_*_TTL_MS`.
 - [ ] **Package Manager Updates** – Background checks for pending updates in `brew`, `apt`, or `cargo`.
 
 ### Developer Experience
+- [x] **One-line Installer** – `install.sh` downloads the matching prebuilt binary and falls back to a Cargo source build.
 - [ ] **VSCode & JetBrains Integration** – Optimized rendering for integrated terminals to avoid icon clipping and alignment issues.
 - [ ] **Enhanced Onboarding** – One-click setup for more esoteric shells and WSL2 environments.
 

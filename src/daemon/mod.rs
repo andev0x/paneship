@@ -326,6 +326,10 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
             Response::Ok
         }
         Request::InvalidateCwd(path) => {
+            // Clear the repository-root resolution first so a directory that
+            // just became (or stopped being) a repository is re-detected — for
+            // example immediately after `git init`.
+            crate::cache::invalidate_repo_root(&path);
             let repo = crate::cache::repo_root_for(&path).unwrap_or(path);
             crate::cache::invalidate_git(&repo);
             enqueue_git_refresh(&repo, &state.tx, &state.updating);

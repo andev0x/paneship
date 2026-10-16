@@ -53,6 +53,11 @@ pub fn run(options: BenchmarkOptions) -> Result<BenchmarkReport, String> {
     use std::sync::Arc;
     use std::thread;
 
+    // A fixed width is resolved once: passing `None` into `PromptContext`
+    // would fall back to tmux/terminal probing, so the benchmark would time a
+    // `tmux` subprocess spawn instead of the render path it is meant to
+    // measure.
+    let width = options.width.unwrap_or(80);
     let options = Arc::new(options);
     let mut handles = vec![];
 
@@ -64,7 +69,7 @@ pub fn run(options: BenchmarkOptions) -> Result<BenchmarkReport, String> {
             for _ in 0..opt.iterations {
                 let iter_start = Instant::now();
                 let context =
-                    PromptContext::from_inputs(opt.cwd.clone(), opt.width, opt.exit_code, None);
+                    PromptContext::from_inputs(opt.cwd.clone(), Some(width), opt.exit_code, None);
                 renderer::render(&context);
                 total_duration += iter_start.elapsed();
             }
@@ -72,7 +77,13 @@ pub fn run(options: BenchmarkOptions) -> Result<BenchmarkReport, String> {
         }));
     }
 
-    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.join() {
+            Ok(avg) => results.push(avg),
+            Err(_) => return Err("benchmark worker thread panicked".to_string()),
+        }
+    }
     let _duration = start.elapsed();
 
     // Average of averages
@@ -171,7 +182,7 @@ fn benchmark_starship(options: &BenchmarkOptions) -> Result<Duration, String> {
     let cwd = options
         .cwd
         .clone()
-        .unwrap_or_else(|| std::env::current_dir().unwrap());
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
     // Warm up
     for _ in 0..5 {
