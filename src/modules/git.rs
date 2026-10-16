@@ -33,19 +33,22 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
 
     match resolve_for_context(context) {
         GitResolution::NotRepository => String::new(),
-        GitResolution::Pending => render_placeholder(max_visible_width),
+        GitResolution::Pending => render_placeholder(context, max_visible_width),
         GitResolution::Ready { snapshot, .. } => {
             render_snapshot(&snapshot, context, max_visible_width)
         }
     }
 }
 
-fn render_placeholder(max_visible_width: usize) -> String {
-    let placeholder = "[git...]";
+fn render_placeholder(context: &PromptContext, max_visible_width: usize) -> String {
+    let placeholder = context.config.git_placeholder();
     if UnicodeWidthStr::width(placeholder) > max_visible_width {
         return String::new();
     }
-    format!("\x1b[2;36m{placeholder}\x1b[0m")
+    format!(
+        "\x1b[{}m{placeholder}\x1b[0m",
+        context.config.git_branch_color()
+    )
 }
 
 fn render_snapshot(
@@ -53,10 +56,9 @@ fn render_snapshot(
     context: &PromptContext,
     max_visible_width: usize,
 ) -> String {
-    let config = &context.config.git;
-
-    let mut status_tokens = status_tokens(snapshot, config);
-    let icon_with_space = format!("{} ", config.branch_icon);
+    let mut status_tokens = status_tokens(snapshot, context.config.as_ref());
+    let branch_icon = context.config.git_branch_icon();
+    let icon_with_space = format!("{branch_icon} ");
     let icon_width = UnicodeWidthStr::width(icon_with_space.as_str());
     let status_widths = status_tokens
         .iter()
@@ -84,7 +86,12 @@ fn render_snapshot(
             snapshot.branch.clone()
         };
 
-        let mut out = format!("\x1b[1;36m{} {}\x1b[0m", config.branch_icon, branch);
+        let mut out = format!(
+            "\x1b[{}m{} {}\x1b[0m",
+            context.config.git_branch_color(),
+            branch_icon,
+            branch
+        );
         if !status_tokens.is_empty() {
             out.push(' ');
             out.push_str(
@@ -103,7 +110,8 @@ fn render_snapshot(
         if status_tokens.is_empty() {
             let plain = crate::core::layout::strip_ansi(out.as_str());
             return format!(
-                "\x1b[1;36m{}\x1b[0m",
+                "\x1b[{}m{}\x1b[0m",
+                context.config.git_branch_color(),
                 truncate_plain_to_width(plain.as_str(), max_visible_width)
             );
         }
@@ -123,23 +131,23 @@ fn render_snapshot(
 
 fn status_tokens(
     snapshot: &GitSnapshot,
-    config: &crate::core::config::GitConfig,
+    config: &crate::core::config::Config,
 ) -> Vec<(String, String)> {
     let mut status = Vec::new();
 
     if snapshot.staged > 0 {
-        let plain = format!("{}{}", config.staged_icon, snapshot.staged);
-        let styled = format!("\x1b[32m{}\x1b[0m", plain);
+        let plain = format!("{}{}", config.git_staged_icon(), snapshot.staged);
+        let styled = format!("\x1b[{}m{}\x1b[0m", config.git_staged_color(), plain);
         status.push((plain, styled));
     }
     if snapshot.unstaged > 0 {
-        let plain = format!("{}{}", config.unstaged_icon, snapshot.unstaged);
-        let styled = format!("\x1b[33m{}\x1b[0m", plain);
+        let plain = format!("{}{}", config.git_unstaged_icon(), snapshot.unstaged);
+        let styled = format!("\x1b[{}m{}\x1b[0m", config.git_unstaged_color(), plain);
         status.push((plain, styled));
     }
     if snapshot.untracked > 0 {
-        let plain = format!("{}{}", config.untracked_icon, snapshot.untracked);
-        let styled = format!("\x1b[31m{}\x1b[0m", plain);
+        let plain = format!("{}{}", config.git_untracked_icon(), snapshot.untracked);
+        let styled = format!("\x1b[{}m{}\x1b[0m", config.git_untracked_color(), plain);
         status.push((plain, styled));
     }
 
@@ -297,6 +305,8 @@ mod tests {
             last_command_duration_ms: None,
             config: Arc::new(Config::default()),
             git_state,
+            language_state: None,
+            package_state: None,
         }
     }
 

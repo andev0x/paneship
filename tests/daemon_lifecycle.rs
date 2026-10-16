@@ -85,6 +85,21 @@ fn daemon_heals_stale_socket_and_serves_clients() {
         "invalidate should succeed against a live daemon"
     );
 
+    // The TUI signals the daemon with the same RELOAD_CONFIG request; exercise
+    // it through the `daemon reload` CLI so the hot-reload path is covered.
+    let reloaded = Command::new(paneship())
+        .args(["daemon", "reload"])
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(
+        reloaded,
+        "daemon reload should succeed against a live daemon"
+    );
+
     let _ = daemon.kill();
     let _ = daemon.wait();
     let _ = std::fs::remove_dir_all(&runtime_dir);

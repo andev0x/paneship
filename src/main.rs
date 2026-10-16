@@ -6,10 +6,12 @@ mod benchmark;
 mod cache;
 mod core;
 mod daemon;
+mod detectors;
 mod ipc;
 mod modules;
 #[cfg(unix)]
 mod tmux;
+mod tui;
 
 use std::path::PathBuf;
 
@@ -46,9 +48,11 @@ enum CliCommand {
     Init(InitOptions),
     Render(RenderOptions),
     Benchmark(BenchmarkOptions),
+    Configure,
     Top,
     Daemon,
     DaemonPing,
+    DaemonReload,
     Invalidate(PathBuf),
     Help,
 }
@@ -129,6 +133,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        CliCommand::Configure => {
+            if let Err(err) = tui::run() {
+                eprintln!("config error: {err}");
+                std::process::exit(1);
+            }
+        }
         CliCommand::Daemon => {
             if let Err(err) = daemon::run() {
                 eprintln!("daemon error: {err}");
@@ -137,6 +147,13 @@ fn main() {
         }
         CliCommand::DaemonPing => {
             if daemon::ping() {
+                println!("ok");
+            } else {
+                std::process::exit(1);
+            }
+        }
+        CliCommand::DaemonReload => {
+            if daemon::reload_config() {
                 println!("ok");
             } else {
                 std::process::exit(1);
@@ -193,6 +210,10 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
 
     if matches!(args[0].as_str(), "top" | "-top") {
         return Ok(CliCommand::Top);
+    }
+
+    if args[0] == "config" {
+        return Ok(CliCommand::Configure);
     }
 
     if args[0] == "daemon" {
@@ -713,6 +734,7 @@ fn parse_daemon_args(args: &[String]) -> Result<CliCommand, String> {
     match args {
         [] => Ok(CliCommand::Daemon),
         [subcommand] if subcommand == "ping" => Ok(CliCommand::DaemonPing),
+        [subcommand] if subcommand == "reload" => Ok(CliCommand::DaemonReload),
         [unknown, ..] => Err(format!("unknown daemon argument: {unknown}")),
     }
 }
@@ -786,5 +808,5 @@ fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top\n  paneship daemon [ping]\n  paneship invalidate [--cwd <path>]\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top\n  paneship config\n  paneship daemon [ping|reload]\n  paneship invalidate [--cwd <path>]\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
 }

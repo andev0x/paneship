@@ -1,6 +1,26 @@
+use crate::cache::LanguageSnapshot;
 use crate::core::config::Config;
 use crate::modules::git::GitResolution;
 use std::path::PathBuf;
+
+/// Resolution state for a daemon-resolved metadata segment.
+///
+/// Mirrors [`GitResolution`] so the render path can emit an explicit
+/// placeholder while a worker computes rather than blocking on manifest I/O.
+#[derive(Debug, Clone)]
+pub enum MetadataState<T> {
+    /// A usable value. `stale` marks data served from an expired entry while a
+    /// background refresh is in flight.
+    Ready {
+        value: T,
+        #[allow(dead_code)]
+        stale: bool,
+    },
+    /// The source was detected but its metadata is not available yet.
+    Pending,
+    /// No language/package applies to this directory.
+    Absent,
+}
 
 #[derive(Debug, Clone)]
 pub struct PromptContext {
@@ -12,6 +32,10 @@ pub struct PromptContext {
     /// Git state pre-resolved by the daemon render path. When `None` the Git
     /// module resolves it (via the daemon socket or a bounded local compute).
     pub git_state: Option<GitResolution>,
+    /// Language metadata pre-resolved by the daemon render path.
+    pub language_state: Option<MetadataState<LanguageSnapshot>>,
+    /// Package version pre-resolved by the daemon render path.
+    pub package_state: Option<MetadataState<String>>,
 }
 
 impl PromptContext {
@@ -52,6 +76,8 @@ impl PromptContext {
             last_command_duration_ms,
             config,
             git_state: None,
+            language_state: None,
+            package_state: None,
         }
     }
 }

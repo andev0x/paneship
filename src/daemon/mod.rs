@@ -6,7 +6,8 @@
 //! blocks, and a filesystem watcher invalidates cached state when Git metadata
 //! changes.
 
-use crate::cache::{GitLookup, GitSnapshot, LanguageSnapshot};
+use crate::cache::{GitLookup, GitSnapshot, LanguageSnapshot, MetadataLookup};
+use crate::core::prompt::MetadataState;
 use crate::ipc::{self, IpcListener};
 use crate::modules::git::GitResolution;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -34,9 +35,6 @@ pub enum Request {
         path: PathBuf,
         last_exit_code: i32,
     },
-    GetMetadata {
-        path: PathBuf,
-    },
     Render {
         cwd: PathBuf,
         exit_code: i32,
@@ -45,16 +43,14 @@ pub enum Request {
     },
     NotifyGit(PathBuf, GitSnapshot),
     InvalidateCwd(PathBuf),
+    /// Reload `config.toml` from disk (sent by the TUI after a save).
+    ReloadConfig,
     Ping,
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum Response {
     Git(GitResolution),
-    Metadata {
-        language: Option<LanguageSnapshot>,
-        package: Option<String>,
-    },
     Rendered(String),
     Pong,
     Ok,
@@ -65,8 +61,38 @@ enum WorkerMessage {
     UpdateMetadata(PathBuf),
 }
 
+/// Distinguishes Git and metadata refreshes so one never suppresses the other
+/// for the same working directory.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum UpdateKind {
+    Git,
+    Metadata,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct UpdateKey {
+    kind: UpdateKind,
+    path: PathBuf,
+}
+
+impl UpdateKey {
+    fn git(path: &Path) -> Self {
+        Self {
+            kind: UpdateKind::Git,
+            path: path.to_path_buf(),
+        }
+    }
+
+    fn metadata(path: &Path) -> Self {
+        Self {
+            kind: UpdateKind::Metadata,
+            path: path.to_path_buf(),
+        }
+    }
+}
+
 type WorkerTx = Arc<Mutex<Sender<WorkerMessage>>>;
-type UpdatingSet = Arc<Mutex<HashSet<PathBuf>>>;
+type UpdatingSet = Arc<Mutex<HashSet<UpdateKey>>>;
 
 #[derive(Clone)]
 struct DaemonState {
@@ -136,17 +162,17 @@ fn spawn_worker(rx: mpsc::Receiver<WorkerMessage>, updating: UpdatingSet) {
         .name("paneship-worker".to_string())
         .spawn(move || {
             while let Ok(message) = rx.recv() {
-                let path = match message {
+                let key = match message {
                     WorkerMessage::UpdateGit(path) => {
                         refresh_git(&path);
-                        path
+                        UpdateKey::git(&path)
                     }
                     WorkerMessage::UpdateMetadata(path) => {
                         refresh_metadata(&path);
-                        path
+                        UpdateKey::metadata(&path)
                     }
                 };
-                remove_updating(&updating, &path);
+                remove_updating(&updating, &key);
             }
         });
 }
@@ -178,15 +204,16 @@ fn refresh_metadata(path: &Path) {
     }
 }
 
-fn remove_updating(updating: &UpdatingSet, path: &Path) {
+fn remove_updating(updating: &UpdatingSet, key: &UpdateKey) {
     if let Ok(mut set) = updating.lock() {
-        set.remove(path);
+        set.remove(key);
     }
 }
 
 fn enqueue_git_refresh(path: &Path, tx: &WorkerTx, updating: &UpdatingSet) {
+    let key = UpdateKey::git(path);
     if let Ok(mut set) = updating.lock() {
-        if set.insert(path.to_path_buf()) {
+        if set.insert(key) {
             if let Ok(tx) = tx.lock() {
                 let _ = tx.send(WorkerMessage::UpdateGit(path.to_path_buf()));
             }
@@ -195,8 +222,9 @@ fn enqueue_git_refresh(path: &Path, tx: &WorkerTx, updating: &UpdatingSet) {
 }
 
 fn enqueue_metadata_refresh(path: &Path, tx: &WorkerTx, updating: &UpdatingSet) {
+    let key = UpdateKey::metadata(path);
     if let Ok(mut set) = updating.lock() {
-        if set.insert(path.to_path_buf()) {
+        if set.insert(key) {
             if let Ok(tx) = tx.lock() {
                 let _ = tx.send(WorkerMessage::UpdateMetadata(path.to_path_buf()));
             }
@@ -221,16 +249,6 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
             path,
             last_exit_code,
         } => Response::Git(resolve_git_for_render(&path, last_exit_code, &state).await),
-        Request::GetMetadata { path } => {
-            let language = crate::cache::get_language(&path).flatten();
-            let package = crate::cache::get_package_version(&path).flatten();
-
-            if language.is_none() && package.is_none() {
-                enqueue_metadata_refresh(&path, &state.tx, &state.updating);
-            }
-
-            Response::Metadata { language, package }
-        }
         Request::Render {
             cwd,
             exit_code,
@@ -238,6 +256,8 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
             duration_ms,
         } => {
             let resolution = resolve_git_for_render(&cwd, exit_code, &state).await;
+            let language_state = resolve_language_for_render(&cwd, &state);
+            let package_state = resolve_package_for_render(&cwd, &state);
             let mut context = crate::core::prompt::PromptContext::from_inputs(
                 Some(cwd),
                 Some(width),
@@ -245,6 +265,8 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
                 duration_ms,
             );
             context.git_state = Some(resolution);
+            context.language_state = Some(language_state);
+            context.package_state = Some(package_state);
             Response::Rendered(crate::core::renderer::render(&context))
         }
         Request::NotifyGit(path, snapshot) => {
@@ -256,6 +278,12 @@ async fn handle_client(stream: ipc::Stream, state: DaemonState) -> io::Result<()
             crate::cache::invalidate_git(&repo);
             enqueue_git_refresh(&repo, &state.tx, &state.updating);
             register_repo(&state, &repo);
+            Response::Ok
+        }
+        Request::ReloadConfig => {
+            let _ = crate::core::config::Config::reload();
+            crate::cache::invalidate_metadata();
+            log::info("configuration reloaded via IPC");
             Response::Ok
         }
         Request::Ping => Response::Pong,
@@ -328,6 +356,65 @@ async fn resolve_git_for_render(
     }
 }
 
+/// Resolve language metadata for a render without blocking on manifest I/O.
+///
+/// A cheap marker probe decides whether a language applies at all; the actual
+/// version extraction is dispatched to the worker pool, returning cached/stale
+/// data or an explicit `[lang...]` placeholder in the meantime.
+fn resolve_language_for_render(cwd: &Path, state: &DaemonState) -> MetadataState<LanguageSnapshot> {
+    let Some(matched) = crate::detectors::find_marker(cwd) else {
+        return MetadataState::Absent;
+    };
+
+    match crate::cache::language_lookup(&matched.marker) {
+        MetadataLookup::Fresh(value) => MetadataState::Ready {
+            value,
+            stale: false,
+        },
+        MetadataLookup::Stale(Some(value)) => {
+            enqueue_metadata_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Ready { value, stale: true }
+        }
+        MetadataLookup::Stale(None) => {
+            enqueue_metadata_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Pending
+        }
+        MetadataLookup::Missing => {
+            crate::cache::mark_language_pending(&matched.marker);
+            enqueue_metadata_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Pending
+        }
+    }
+}
+
+/// Resolve the package version for a render using the same non-blocking
+/// stale-while-revalidate pattern as language metadata.
+fn resolve_package_for_render(cwd: &Path, state: &DaemonState) -> MetadataState<String> {
+    let Some(manifest) = crate::modules::package::find_cargo_manifest_path(cwd) else {
+        return MetadataState::Absent;
+    };
+
+    match crate::cache::package_lookup(&manifest) {
+        MetadataLookup::Fresh(value) => MetadataState::Ready {
+            value,
+            stale: false,
+        },
+        MetadataLookup::Stale(Some(value)) => {
+            enqueue_metadata_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Ready { value, stale: true }
+        }
+        MetadataLookup::Stale(None) => {
+            enqueue_metadata_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Pending
+        }
+        MetadataLookup::Missing => {
+            crate::cache::mark_package_pending(&manifest);
+            enqueue_metadata_refresh(cwd, &state.tx, &state.updating);
+            MetadataState::Pending
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Client API (blocking, no async runtime required)
 // ---------------------------------------------------------------------------
@@ -357,15 +444,9 @@ pub fn query_git(path: &Path, last_exit_code: i32) -> Option<GitResolution> {
     }
 }
 
-/// Query cached language/package metadata for `path`.
-pub fn query_metadata(path: &Path) -> (Option<LanguageSnapshot>, Option<String>) {
-    let request = Request::GetMetadata {
-        path: path.to_path_buf(),
-    };
-    match send(&request) {
-        Ok(Response::Metadata { language, package }) => (language, package),
-        _ => (None, None),
-    }
+/// Ask the daemon to reload `config.toml` (sent by the TUI after a save).
+pub fn reload_config() -> bool {
+    matches!(send(&Request::ReloadConfig), Ok(Response::Ok))
 }
 
 /// Ask the daemon to render the prompt. Returns `None` when unreachable.

@@ -31,7 +31,10 @@ By leveraging a persistent background daemon, asynchronous Git checks, and smart
 ##  Features
 
 -  **Sub-millisecond Performance** – Renders in **~2.5ms** on average by using a client-daemon architecture.
--  **Async Background Workers** – Git status checks and programming language detections run in background threads, so your prompt never blocks.
+-  **Non-Blocking Async Detection** – Git status checks and language/runtime detection run in background workers. Metadata never blocks the render path; a `[lang...]` placeholder fills in until the worker reports back.
+-  **Modular Detector Registry** – Every language lives behind a single `Detector` trait in its own file, reading version pins directly from `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, … with no external subprocess.
+-  **Interactive Configurator** – `paneship config` opens a TUI with a live prompt preview, atomic saves, and instant daemon hot-reload.
+-  **Icon Sets & Themes** – Built-in `nerdfont`, `emoji` and `minimal` (ASCII) profiles plus colour themes, so prompt formatting adapts to any terminal or font.
 -  **Multi-Shell Compatibility** – Native integration scripts for Zsh, Bash, Fish, PowerShell, Nushell, Elvish, Xonsh, Tcsh, Ion, and Cmd.
 -  **Tmux-Aware & Responsive** – Automatically detects tmux pane width changes and truncates long paths or metadata gracefully.
 -  **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
@@ -147,79 +150,80 @@ paneship init <shell>
 
 ##  Configuration
 
-Paneship configuration is defined in `~/.config/paneship/config.toml`. Sensible defaults are applied if this file is not present.
+Paneship configuration is defined in `~/.config/paneship/config.toml`. Sensible defaults are applied if this file is not present. Run **`paneship config`** for an interactive TUI with a live prompt preview.
 
 ### Default Config Structure
 
-Here is a standard setup using Nerd Font icons (requires a [Nerd Font](https://www.nerdfonts.com/)):
+Prompt glyphs and colours resolve from an **icon profile** and **theme**, so you rarely set icons by hand:
 
 ```toml
+[icons]
+profile = "nerdfont"   # nerdfont | emoji | minimal
+
+[theme]
+name = "default"       # default | dracula | nord | tokyo-night | gruvbox
+
 [directory]
-icon = " "
+icon = ""              # empty = active icon profile
 truncation_length = 3
 truncate_to_repo = true
 
 [git]
-branch_icon = " "
+branch_icon = ""       # empty = active icon profile
 staged_icon = "+"
 unstaged_icon = "!"
 untracked_icon = "?"
 
 [status]
-success_icon = "➜"
-failure_icon = "✗"
+success_icon = ""      # empty = active icon profile
+failure_icon = ""
 
 [metadata]
-time_color = "2;37"       # Dim white (ANSI SGR code)
-paneship_color = "1;32"   # Bright green (ANSI SGR code)
-
-[metadata.languages.rust]
-icon = ""
-color = "1;33"            # Bright yellow
-
-[metadata.languages.node]
-icon = ""
-color = "1;32"            # Bright green
-
-[metadata.languages.python]
-icon = ""
-color = "1;34"            # Bright blue
-
-[metadata.languages.go]
-icon = ""
-color = "1;36"            # Bright cyan
+time_color = ""        # empty = active theme
+paneship_color = ""    # empty = active theme
 ```
 
-> **Note**: An emoji-based config option is available in the [example_config.toml](./example_config.toml) file.
+> **Note**: An emoji-based configuration is available in the [example_config.toml](./example_config.toml) file. Switching `profile = "emoji"` or `"minimal"` updates every segment at once.
 
 ### Configuration Reference
+
+#### `[icons]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `profile` | String | `"nerdfont"` | Glyph profile: `nerdfont`, `emoji`, or `minimal` (pure ASCII). |
+
+#### `[theme]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | String | `"default"` | Colour theme: `default`, `dracula`, `nord`, `tokyo-night`, or `gruvbox`. |
 
 #### `[directory]`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `icon` | String | `" "` | Icon prefix before the path. |
+| `icon` | String | `""` | Icon prefix before the path. Empty falls back to the active icon profile. |
 | `truncation_length` | Integer | `3` | Maximum folder depth to display before truncating. |
 | `truncate_to_repo` | Boolean | `true` | If true, automatically hides paths outside the Git repository root when inside a repo. |
 
 #### `[git]`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `branch_icon` | String | `" "` | Prefix icon for Git branch. |
+| `branch_icon` | String | `""` | Prefix icon for Git branch. Empty falls back to the icon profile. |
 | `staged_icon` | String | `"+"` | Symbol representing staged changes. |
-| `unstaged_icon` | String | `"\!"` | Symbol representing unstaged changes. |
+| `unstaged_icon` | String | `"!"` | Symbol representing unstaged changes. |
 | `untracked_icon` | String | `"?"` | Symbol representing untracked files. |
 
 #### `[status]`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `success_icon` | String | `"➜"` | Prompt cursor character on command success. |
-| `failure_icon` | String | `"✗"` | Prompt cursor character on command failure. |
+| `success_icon` | String | `""` | Prompt cursor character on command success. Empty falls back to the icon profile. |
+| `failure_icon` | String | `""` | Prompt cursor character on command failure. Empty falls back to the icon profile. |
 
 #### `[metadata]`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `time_color` | String | `"2;37"` | ANSI SGR color code for the current time. |
-| `paneship_color` | String | `"1;32"` | ANSI SGR color code for package version and prompt metadata. |
+| `time_color` | String | `""` | ANSI SGR colour code for the current time. Empty falls back to the theme. |
+| `paneship_color` | String | `""` | ANSI SGR colour code for the package version. Empty falls back to the theme. |
+| `languages` | Table | `{}` | Optional per-language `icon`/`color` overrides; empty fields fall back to the icon profile and theme. |
 
 ---
 
@@ -270,6 +274,11 @@ Git state is held in an in-memory LRU store (default capacity: 500 working direc
 
 > Tune the cache with `PANESHIP_CACHE_CAPACITY` and the Git TTL with `PANESHIP_GIT_TTL_MS`.
 
+### Non-Blocking Metadata Detection
+Language/runtime metadata follows the same stale-while-revalidate pattern. A cache miss or TTL expiry returns an explicit `[lang...]` placeholder immediately and dispatches a manifest parse to the worker pool — version extraction never runs on the render path. Parsing is **manifest-first** (via lightweight TOML/JSON readers) and spawns no external subprocesses (`node -v`, `python --version`, …).
+
+Detectors are isolated behind a uniform trait: adding a language means implementing `Detector` in a single file and appending it to the registry in `src/detectors/mod.rs`, leaving the renderer untouched.
+
 ---
 
 ##  Benchmarks
@@ -295,9 +304,13 @@ Git state is held in an in-memory LRU store (default capacity: 500 working direc
 - `paneship render --width 100`: Specify custom width constraints.
 - `paneship render --duration-ms 500`: Renders the prompt with a command execution duration.
 
+### Configuration
+- `paneship config`: Opens the interactive TUI configurator with a live prompt preview. `Ctrl+S` saves atomically and hot-reloads the daemon.
+
 ### Daemon Administration
 - `paneship daemon`: Spawns the background socket server daemon.
 - `paneship daemon ping`: Verifies that the daemon is active and responding.
+- `paneship daemon reload`: Asks the running daemon to re-read `config.toml` (used by the TUI after saving).
 - `paneship invalidate [--cwd <path>]`: Signals the daemon that Git metadata under `<path>` changed (used by the shell hooks).
 
 ### Performance Testing & Monitoring
@@ -311,7 +324,14 @@ Git state is held in an in-memory LRU store (default capacity: 500 working direc
 ##  Troubleshooting
 
 ### My prompt icons are showing as boxes or garbled text?
-Paneship defaults use Nerd Fonts for rich icon displays. Install a font from [nerdfonts.com](https://www.nerdfonts.com/) (e.g., *FiraCode Nerd Font*) and set your terminal emulator to use it. Alternatively, configure standard Unicode emojis or character symbols in `~/.config/paneship/config.toml`.
+Paneship defaults to the `nerdfont` icon profile, which requires a [Nerd Font](https://www.nerdfonts.com/) (e.g. *FiraCode Nerd Font*). If you cannot install one, switch profiles in `~/.config/paneship/config.toml`:
+
+```toml
+[icons]
+profile = "emoji"   # or "minimal" for pure ASCII
+```
+
+Run `paneship config` to switch profiles interactively and preview the result.
 
 ### The prompt is not showing git updates/metadata?
 Ensure that the daemon process is running. You can check it via:
@@ -326,8 +346,8 @@ If it is not responding, you can start the daemon manually or verify your shell 
 
 ### Core Enhancements
 - [x] **Cross-Platform Daemon** – The IPC transport is abstracted behind an `IpcListener` trait with Unix domain socket and Windows named pipe adapters.
+- [x] **Interactive Configurator** – A built-in TUI (`paneship config`) to visually customize themes and modules.
 - [ ] **WASM Plugin System** – Allow users to create custom prompt modules using any language that compiles to WebAssembly.
-- [ ] **Interactive Configurator** – A built-in TUI (`paneship config`) to visually customize themes and modules.
 - [ ] **Right-Side Prompt (RPROMPT)** – Native support for right-aligned metadata in Zsh, Fish, and Powerline-compatible shells.
 
 ### New Modules

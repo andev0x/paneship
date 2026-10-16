@@ -18,8 +18,14 @@ const DEFAULT_GIT_TTL_MS: u64 = 5_000;
 const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(60);
 const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(120);
 
-/// `(language, version)` pair surfaced in the prompt metadata area.
-pub type LanguageSnapshot = (String, String);
+/// Language/version metadata surfaced in the prompt metadata area.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LanguageSnapshot {
+    /// Canonical language key (matches `[metadata.languages.<key>]`).
+    pub language: String,
+    /// Version pin, when one was extracted from a manifest.
+    pub version: Option<String>,
+}
 
 /// Point-in-time Git state for a repository.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,8 +68,9 @@ struct TimedCacheEntry<T> {
 }
 
 type GitCache = LruCache<PathBuf, GitCacheEntry>;
-type LanguageCache = LruCache<PathBuf, TimedCacheEntry<Option<LanguageSnapshot>>>;
-type PackageCache = LruCache<PathBuf, TimedCacheEntry<Option<String>>>;
+type TimedCache<T> = LruCache<PathBuf, TimedCacheEntry<Option<T>>>;
+type LanguageCache = TimedCache<LanguageSnapshot>;
+type PackageCache = TimedCache<String>;
 type RepoRootCache = LruCache<PathBuf, Option<PathBuf>>;
 
 static GIT_CACHE: OnceLock<Mutex<GitCache>> = OnceLock::new();
@@ -162,64 +169,84 @@ pub fn invalidate_git(path: &Path) {
     lock(git_cache()).pop(&key);
 }
 
-/// Compute and cache a language snapshot on miss/expiry.
-pub fn get_or_compute_language<F>(path: &Path, compute: F) -> Option<LanguageSnapshot>
-where
-    F: FnOnce() -> Option<LanguageSnapshot>,
-{
-    if let Some(cached) = get_language(path) {
-        return cached;
+/// Outcome of a metadata cache lookup. Mirrors [`GitLookup`] so the render path
+/// can distinguish fresh, stale/pending and unknown states.
+#[derive(Debug, Clone)]
+pub enum MetadataLookup<T> {
+    /// Cached value within its TTL and with an unchanged source file.
+    Fresh(T),
+    /// Entry past its TTL, or a pending placeholder. `Some` carries the last
+    /// known value (may be stale), `None` means a refresh is in flight.
+    Stale(Option<T>),
+    /// No entry for this source path.
+    Missing,
+}
+
+fn lookup_metadata<T: Clone>(cache: &Mutex<TimedCache<T>>, path: &Path) -> MetadataLookup<T> {
+    let mut guard = lock(cache);
+    let Some(entry) = guard.get(path).cloned() else {
+        return MetadataLookup::Missing;
+    };
+
+    if Instant::now() > entry.expires_at {
+        return MetadataLookup::Stale(entry.value);
     }
 
-    let fresh = compute();
+    if entry.source_mtime != file_mtime(path) {
+        guard.pop(path);
+        return MetadataLookup::Missing;
+    }
+
+    match entry.value {
+        Some(value) => MetadataLookup::Fresh(value),
+        None => MetadataLookup::Stale(None),
+    }
+}
+
+fn store_metadata<T>(cache: &Mutex<TimedCache<T>>, path: &Path, value: Option<T>, ttl: Duration) {
     let entry = TimedCacheEntry {
-        expires_at: Instant::now() + LANGUAGE_CACHE_TTL,
-        value: fresh.clone(),
+        expires_at: Instant::now() + ttl,
+        value,
         source_mtime: file_mtime(path),
     };
-    lock(language_cache()).put(path.to_path_buf(), entry);
-    fresh
+    lock(cache).put(path.to_path_buf(), entry);
 }
 
-/// Read a non-expired language entry whose source file is unchanged.
-pub fn get_language(path: &Path) -> Option<Option<LanguageSnapshot>> {
-    let mut cache = lock(language_cache());
-    let entry = cache.get(path)?.clone();
-    if Instant::now() <= entry.expires_at && entry.source_mtime == file_mtime(path) {
-        return Some(entry.value);
-    }
-    cache.pop(path);
-    None
+/// Look up cached language metadata for a marker file.
+pub fn language_lookup(marker: &Path) -> MetadataLookup<LanguageSnapshot> {
+    lookup_metadata(language_cache(), marker)
 }
 
-/// Compute and cache a package version on miss/expiry.
-pub fn get_or_compute_package_version<F>(path: &Path, compute: F) -> Option<String>
-where
-    F: FnOnce() -> Option<String>,
-{
-    if let Some(cached) = get_package_version(path) {
-        return cached;
-    }
-
-    let fresh = compute();
-    let entry = TimedCacheEntry {
-        expires_at: Instant::now() + PACKAGE_CACHE_TTL,
-        value: fresh.clone(),
-        source_mtime: file_mtime(path),
-    };
-    lock(package_cache()).put(path.to_path_buf(), entry);
-    fresh
+/// Record that a language marker exists but its metadata is not yet known.
+pub fn mark_language_pending(marker: &Path) {
+    store_metadata(language_cache(), marker, None, LANGUAGE_CACHE_TTL);
 }
 
-/// Read a non-expired package entry whose manifest is unchanged.
-pub fn get_package_version(path: &Path) -> Option<Option<String>> {
-    let mut cache = lock(package_cache());
-    let entry = cache.get(path)?.clone();
-    if Instant::now() <= entry.expires_at && entry.source_mtime == file_mtime(path) {
-        return Some(entry.value);
-    }
-    cache.pop(path);
-    None
+/// Store freshly computed language metadata (or a computed negative).
+pub fn store_language(marker: &Path, value: Option<LanguageSnapshot>) {
+    store_metadata(language_cache(), marker, value, LANGUAGE_CACHE_TTL);
+}
+
+/// Look up cached package metadata for a manifest file.
+pub fn package_lookup(manifest: &Path) -> MetadataLookup<String> {
+    lookup_metadata(package_cache(), manifest)
+}
+
+/// Record that a package manifest exists but its version is not yet known.
+pub fn mark_package_pending(manifest: &Path) {
+    store_metadata(package_cache(), manifest, None, PACKAGE_CACHE_TTL);
+}
+
+/// Store a freshly computed package version (or a computed negative).
+pub fn store_package(manifest: &Path, value: Option<String>) {
+    store_metadata(package_cache(), manifest, value, PACKAGE_CACHE_TTL);
+}
+
+/// Drop all language/package entries. Called when config is hot-reloaded so
+/// icon/theme changes and language maps take effect immediately.
+pub fn invalidate_metadata() {
+    lock(language_cache()).clear();
+    lock(package_cache()).clear();
 }
 
 /// Compute and cache the repository root for `path` on miss.
@@ -416,5 +443,68 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn language_metadata_lifecycle_marks_pending_then_fresh() {
+        let _guard = guard();
+        let marker = tmp_path("lang-marker");
+
+        assert!(matches!(language_lookup(&marker), MetadataLookup::Missing));
+
+        mark_language_pending(&marker);
+        assert!(
+            matches!(language_lookup(&marker), MetadataLookup::Stale(None)),
+            "pending marker must read as in-flight, not missing"
+        );
+
+        store_language(
+            &marker,
+            Some(LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            }),
+        );
+        match language_lookup(&marker) {
+            MetadataLookup::Fresh(snapshot) => {
+                assert_eq!(snapshot.language, "rust");
+                assert_eq!(snapshot.version.as_deref(), Some("1.74"));
+            }
+            _ => panic!("expected a fresh language snapshot"),
+        }
+    }
+
+    #[test]
+    fn package_metadata_lifecycle_marks_pending_then_fresh() {
+        let _guard = guard();
+        let manifest = tmp_path("pkg-manifest");
+
+        mark_package_pending(&manifest);
+        assert!(matches!(
+            package_lookup(&manifest),
+            MetadataLookup::Stale(None)
+        ));
+
+        store_package(&manifest, Some("2.0.0".to_string()));
+        match package_lookup(&manifest) {
+            MetadataLookup::Fresh(version) => assert_eq!(version, "2.0.0"),
+            _ => panic!("expected a fresh package version"),
+        }
+    }
+
+    #[test]
+    fn invalidate_metadata_clears_entries() {
+        let _guard = guard();
+        let marker = tmp_path("invalidate-meta");
+        store_language(
+            &marker,
+            Some(LanguageSnapshot {
+                language: "go".to_string(),
+                version: None,
+            }),
+        );
+        assert!(matches!(language_lookup(&marker), MetadataLookup::Fresh(_)));
+        invalidate_metadata();
+        assert!(matches!(language_lookup(&marker), MetadataLookup::Missing));
     }
 }
