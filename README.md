@@ -40,7 +40,7 @@ By leveraging a persistent background daemon, asynchronous Git checks, and smart
 -  **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
 -  **Configurable & Aesthetic** – Easy-to-use TOML-based configurations. Fully supports custom icons, emojis, and Nerd Fonts.
 -  **Rust/Node/Bun/Go/Python/Deno/Ruby/PHP/Java Version Detectors** – Automatically fetches and displays active development environment versions in your metadata area.
--  **Native Right Prompt (RPROMPT)** – Zsh (`RPROMPT`/`RPS1`) and Fish (`fish_right_prompt`) bind the width-aware right region natively; low-priority elements (timing, clock) collapse first so narrow tmux panes never wrap.
+-  **Native Right Prompt (RPROMPT)** – Zsh (`RPROMPT`/`RPS1`), Fish (`fish_right_prompt`) and Nushell (`PROMPT_COMMAND_RIGHT`) bind the width-aware right region natively; low-priority elements (timing, clock) collapse first so narrow tmux panes never wrap.
 -  **Infrastructure Detectors** – Kubernetes context/namespace, container markers, AWS/GCP/Azure profiles, and Nix/Direnv state, resolved in background workers with a hard 10 ms per-detector budget.
 -  **Live Telemetry** – `paneship top` streams daemon worker utilization, cache hit ratios and average lookup latency, LRU evictions, and filesystem-watcher throughput.
 -  **Command Execution Timing** – Keeps track of long-running command durations and presents them in a human-readable format (e.g., `11ms`, `1m20s`).
@@ -116,6 +116,10 @@ paneship init <shell> --onboarding
 paneship init zsh --onboarding
 ```
 
+`paneship init <shell> to onboarding` is an accepted alias for the same
+behaviour. Onboarding is supported for Zsh, Bash, Fish, PowerShell, Nushell,
+Elvish, Xonsh, Tcsh and Ion.
+
 ### 2. Manual Configuration
 
 Add the corresponding snippet to your shell configuration file. Note that manual configuration requires you to ensure the `paneship daemon` is running for optimal performance.
@@ -188,6 +192,18 @@ profile = "nerdfont"   # nerdfont | emoji | minimal
 [theme]
 name = "default"       # default | dracula | nord | tokyo-night | gruvbox
 
+[prompt]
+rprompt = true         # render the right-aligned metadata region
+rprompt_min_width = 20 # below this width the right region is dropped
+
+[environment]
+enabled = true         # master switch for the environment segment
+kubernetes = true      # ~/.kube/config context + namespace
+docker = true          # /.dockerenv, /proc/1/cgroup, $container
+cloud = true           # active AWS / GCP / Azure profile
+nix_direnv = true      # IN_NIX_SHELL and .envrc state
+health = false         # opt-in CPU load pressure / low battery
+
 [directory]
 icon = ""              # empty = active icon profile
 truncation_length = 3
@@ -221,6 +237,22 @@ paneship_color = ""    # empty = active theme
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `name` | String | `"default"` | Colour theme: `default`, `dracula`, `nord`, `tokyo-night`, or `gruvbox`. |
+
+#### `[prompt]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `rprompt` | Boolean | `true` | Render the right-aligned metadata region at all. |
+| `rprompt_min_width` | Integer | `20` | Minimum terminal width (columns) required to render the RPROMPT. Below this the right region is dropped entirely rather than risking a wrap. |
+
+#### `[environment]`
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | Boolean | `true` | Master switch for the environment segment. |
+| `kubernetes` | Boolean | `true` | Kubernetes context / namespace detection (`~/.kube/config` or `$KUBECONFIG`). |
+| `docker` | Boolean | `true` | Container detection (`.dockerenv`, `/proc/1/cgroup`, `$container`). |
+| `cloud` | Boolean | `true` | Active AWS / GCP / Azure profile detection. |
+| `nix_direnv` | Boolean | `true` | Nix shell (`IN_NIX_SHELL`) and direnv (`.envrc`) detection. |
+| `health` | Boolean | `false` | Opt-in system health checks (CPU load pressure / low battery). macOS shells out to `pmset` and runs under a looser 250 ms budget. |
 
 #### `[directory]`
 | Parameter | Type | Default | Description |
@@ -342,7 +374,7 @@ workers, and the daemon serves cached regions over a local socket.
 - `paneship render --cwd /path/to/dir`: Mock prompt rendering for a specific directory.
 - `paneship render --width 100`: Specify custom width constraints.
 - `paneship render --duration-ms 500`: Renders the prompt with a command execution duration.
-- `paneship render --layout split`: Emit the structured `left \u001f right \n cursor` regions used to bind native right prompts.
+- `paneship render --layout split`: Emit the structured `left \u001f right \n cursor` regions used to bind native right prompts (`rprompt` is an accepted alias).
 
 ### Configuration
 - `paneship config`: Opens the interactive TUI configurator with a live prompt preview. `Ctrl+S` saves atomically and hot-reloads the daemon.
