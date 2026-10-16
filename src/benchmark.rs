@@ -1,3 +1,6 @@
+//! Benchmark harness. The comparison runner is Unix-only; `top` works anywhere.
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use crate::core::prompt::PromptContext;
 use crate::core::renderer;
 use crate::modules::{directory, git, metadata, package, status};

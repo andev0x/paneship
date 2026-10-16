@@ -1,93 +1,175 @@
-use crate::cache::get_or_compute_language;
-use crate::core::layout::{truncate_plain_to_width, visible_width};
-use crate::core::prompt::PromptContext;
-use std::fs;
+//! Metadata segment: language/runtime version, command duration and clock.
+//!
+//! Language detection is **never** performed on the hot render path. The daemon
+//! resolves it from the cache, dispatching a background worker on a miss or TTL
+//! expiry and returning an explicit placeholder (e.g. `[lang...]`) so the
+//! segment never blocks on manifest parsing.
+
+use crate::cache::LanguageSnapshot;
+use crate::core::layout::visible_width;
+use crate::core::prompt::{MetadataState, PromptContext};
 use std::path::Path;
-use std::process::Command;
 use unicode_width::UnicodeWidthStr;
 
+/// Relative priority of each RPROMPT element. Higher values survive longer as
+/// the pane narrows: language/version is retained the longest, command timing
+/// is the first thing to collapse, then the clock.
+const PRIORITY_LANGUAGE: u8 = 100;
+const PRIORITY_TIME: u8 = 80;
+const PRIORITY_DURATION: u8 = 60;
+
+/// One candidate RPROMPT segment, with its display order and collapse priority.
+struct Candidate {
+    order: usize,
+    priority: u8,
+    styled: String,
+    width: usize,
+}
+
+impl Candidate {
+    fn new(order: usize, priority: u8, styled: String) -> Self {
+        let width = visible_width(styled.as_str());
+        Self {
+            order,
+            priority,
+            styled,
+            width,
+        }
+    }
+}
+
+/// Render the RPROMPT metadata region within `max_visible_width`, dropping the
+/// lowest-priority elements first when space is constrained.
+///
+/// Selection is priority-driven, but the surviving elements are emitted in
+/// their natural reading order (language, timing, clock).
 pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) -> String {
     if max_visible_width == 0 {
         return String::new();
     }
 
-    let mut rendered = Vec::new();
     let separator = "   ";
     let separator_width = UnicodeWidthStr::width(separator);
-    let mut current_width = 0;
 
-    for candidate in metadata_parts(context) {
-        if candidate.is_empty() {
-            continue;
-        }
+    let mut candidates: Vec<Candidate> = metadata_parts(context)
+        .into_iter()
+        .filter(|candidate| candidate.width > 0)
+        .collect();
 
-        let candidate_width = visible_width(candidate.as_str());
-        if candidate_width == 0 {
-            continue;
-        }
+    // Greedy allocation by descending priority; ties keep display order.
+    candidates.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| a.order.cmp(&b.order))
+    });
 
-        let proposed = if rendered.is_empty() {
-            candidate_width
+    let mut selected: Vec<Candidate> = Vec::new();
+    let mut used = 0usize;
+    for candidate in candidates {
+        let extra = if selected.is_empty() {
+            candidate.width
         } else {
-            current_width + separator_width + candidate_width
+            separator_width + candidate.width
         };
-
-        if proposed <= max_visible_width {
-            rendered.push(candidate);
-            current_width = proposed;
+        if used + extra <= max_visible_width {
+            used += extra;
+            selected.push(candidate);
         }
     }
 
-    let output = rendered.join(separator);
-    if output.is_empty() {
+    if selected.is_empty() {
         return String::new();
     }
 
-    if visible_width(output.as_str()) <= max_visible_width {
-        output
-    } else {
-        let plain = crate::core::layout::strip_ansi(output.as_str());
-        truncate_plain_to_width(plain.as_str(), max_visible_width)
-    }
+    selected.sort_by_key(|candidate| candidate.order);
+    selected
+        .into_iter()
+        .map(|candidate| candidate.styled)
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
-fn metadata_parts(context: &PromptContext) -> Vec<String> {
-    let metadata_config = &context.config.metadata;
+fn metadata_parts(context: &PromptContext) -> Vec<Candidate> {
     let mut parts = Vec::new();
+    let mut order = 0;
 
-    if let Some((language_name, version)) = detect_language_version(context.cwd.as_path()) {
-        let language_style = metadata_config.language_style(language_name.as_str());
-        let language_value = format!("{} {version}", language_style.icon);
-        parts.push(styled(&language_style.color, &language_value));
+    if let Some(language) = language_part(context) {
+        parts.push(Candidate::new(order, PRIORITY_LANGUAGE, language));
+        order += 1;
     }
 
     if let Some(duration) = render_command_duration(context) {
-        parts.push(duration);
+        parts.push(Candidate::new(order, PRIORITY_DURATION, duration));
+        order += 1;
     }
 
     if let Some(time) = current_time_hhmm() {
-        parts.push(styled(&metadata_config.time_color, &format!("󰥔 {time}")));
+        let plain = format!("{} {time}", context.config.time_icon());
+        parts.push(Candidate::new(
+            order,
+            PRIORITY_TIME,
+            styled(context.config.time_color(), &plain),
+        ));
     }
 
     parts
 }
 
+/// Render the language segment from the pre-resolved state.
+fn language_part(context: &PromptContext) -> Option<String> {
+    match &context.language_state {
+        Some(MetadataState::Ready { value, .. }) => Some(render_language(context, value)),
+        Some(MetadataState::Pending) => Some(styled(
+            context.config.time_color(),
+            context.config.language_placeholder(),
+        )),
+        Some(MetadataState::Absent) => None,
+        // No daemon-provided state: cold-start fallback. Cheap manifest parsing
+        // only, never an external subprocess.
+        None => local_language_part(context),
+    }
+}
+
+fn render_language(context: &PromptContext, snapshot: &LanguageSnapshot) -> String {
+    let style = context.config.language_style(&snapshot.language);
+    let plain = match snapshot.version.as_deref() {
+        Some(version) if !version.is_empty() => format!("{} {version}", style.icon),
+        _ => style.icon.clone(),
+    };
+    styled(&style.color, &plain)
+}
+
+/// Cold-start fallback used only when no daemon state was supplied (e.g. the
+/// daemon is unreachable). Extraction is in-process and subprocess-free.
+fn local_language_part(context: &PromptContext) -> Option<String> {
+    if std::env::var("PANESHIP_DAEMON").is_ok() {
+        return None;
+    }
+    let info = crate::detectors::detect_runtime(context.cwd.as_path())?;
+    let snapshot = LanguageSnapshot {
+        language: info.language,
+        version: info.version,
+    };
+    Some(render_language(context, &snapshot))
+}
+
 fn render_command_duration(context: &PromptContext) -> Option<String> {
     let ms = context.last_command_duration_ms?;
+    let icon = context.config.duration_icon();
     let plain = if ms < 1_000 {
-        format!("󰞌 {ms}ms")
+        format!("{icon} {ms}ms")
     } else {
         let secs = ms / 1_000;
         if secs < 60 {
-            format!("󰞌 {secs}s")
+            format!("{icon} {secs}s")
         } else {
             let mins = secs / 60;
             let rem_secs = secs % 60;
-            format!("󰞌 {mins}m{rem_secs:02}s")
+            format!("{icon} {mins}m{rem_secs:02}s")
         }
     };
 
-    Some(styled("2;37", plain.as_str()))
+    Some(styled(context.config.time_color(), plain.as_str()))
 }
 
 fn current_time_hhmm() -> Option<String> {
@@ -111,244 +193,95 @@ fn current_time_hhmm() -> Option<String> {
     }
 }
 
+/// Compute and cache language + package metadata for the daemon worker.
 pub fn compute_metadata_for_daemon(path: &Path) {
-    if let Some((name, marker)) = detect_language_marker(path) {
-        let _ = crate::cache::get_or_compute_language(marker.as_path(), || {
-            fetch_language_version(path, name.as_str(), marker.as_path())
+    if let Some(matched) = crate::detectors::find_marker(path) {
+        let snapshot = crate::detectors::detect_runtime(path).map(|info| LanguageSnapshot {
+            language: info.language,
+            version: info.version,
         });
+        crate::cache::store_language(&matched.marker, snapshot);
     }
     crate::modules::package::compute_package_metadata_for_daemon(path);
 }
 
-fn detect_language_version(cwd: &Path) -> Option<(String, String)> {
-    #[cfg(unix)]
-    {
-        if std::env::var("PANESHIP_DAEMON").is_err() {
-            let (language, _package) = crate::daemon::query_metadata(cwd);
-            if language.is_some() {
-                return language;
-            }
-        }
-    }
-
-    if let Some((name, marker)) = detect_language_marker(cwd) {
-        return get_or_compute_language(marker.as_path(), || {
-            fetch_language_version(cwd, name.as_str(), marker.as_path())
-        });
-    }
-    None
-}
-
-fn detect_language_marker(cwd: &Path) -> Option<(String, std::path::PathBuf)> {
-    for dir in cwd.ancestors() {
-        if dir.join("Cargo.toml").exists() {
-            return Some(("rust".to_string(), dir.join("Cargo.toml")));
-        }
-        if dir.join("package.json").exists() {
-            return Some(("node".to_string(), dir.join("package.json")));
-        }
-        if dir.join("bun.lockb").exists() || dir.join("bunfig.toml").exists() {
-            return Some(("bun".to_string(), dir.to_path_buf()));
-        }
-        if dir.join("deno.json").exists() || dir.join("deno.jsonc").exists() {
-            return Some(("deno".to_string(), dir.to_path_buf()));
-        }
-        if dir.join("go.mod").exists() {
-            return Some(("go".to_string(), dir.join("go.mod")));
-        }
-        if dir.join("pyproject.toml").exists() || dir.join("requirements.txt").exists() {
-            return Some(("python".to_string(), dir.to_path_buf()));
-        }
-        if dir.join("Gemfile").exists() {
-            return Some(("ruby".to_string(), dir.join("Gemfile")));
-        }
-        if dir.join("composer.json").exists() {
-            return Some(("php".to_string(), dir.join("composer.json")));
-        }
-        if dir.join("pom.xml").exists() || dir.join("build.gradle").exists() {
-            return Some(("java".to_string(), dir.to_path_buf()));
-        }
-        // Limit search depth for performance
-        if dir.join(".git").exists()
-            || dir.to_string_lossy() == "/"
-            || dir.to_string_lossy().ends_with("/$USER")
-        {
-            break;
-        }
-    }
-    None
-}
-
-fn fetch_language_version(
-    cwd: &Path,
-    language: &str,
-    marker_path: &Path,
-) -> Option<(String, String)> {
-    match language {
-        "rust" => {
-            fetch_rust_version(cwd, marker_path).map(|version| (language.to_string(), version))
-        }
-        "node" => fetch_command_version(cwd, "node", &["-v"]).map(|version| {
-            (
-                language.to_string(),
-                version.trim_start_matches('v').to_string(),
-            )
-        }),
-        "bun" => fetch_command_version(cwd, "bun", &["--version"])
-            .map(|version| (language.to_string(), version)),
-        "python" => fetch_python_version(cwd).map(|version| (language.to_string(), version)),
-        "go" => fetch_go_version(cwd).map(|version| (language.to_string(), version)),
-        "deno" => fetch_command_version(cwd, "deno", &["--version"]).and_then(|text| {
-            let first_line = text.lines().next()?.trim();
-            let version = first_line.split_whitespace().nth(1)?.to_string();
-            Some((language.to_string(), version))
-        }),
-        "ruby" => fetch_command_version(cwd, "ruby", &["--version"]).and_then(|text| {
-            let version = text.split_whitespace().nth(1)?.to_string();
-            Some((language.to_string(), version))
-        }),
-        "php" => fetch_command_version(cwd, "php", &["-v"]).and_then(|text| {
-            let first_line = text.lines().next()?.trim();
-            let mut parts = first_line.split_whitespace();
-            let _ = parts.next();
-            let version = parts.next()?.to_string();
-            Some((language.to_string(), version))
-        }),
-        "java" => fetch_java_version(cwd).map(|version| (language.to_string(), version)),
-        _ => None,
-    }
-}
-
-fn fetch_rust_version(cwd: &Path, marker_path: &Path) -> Option<String> {
-    if let Some(version) = rust_toolchain_version_from_path(marker_path) {
-        return Some(version);
-    }
-
-    fetch_command_version(cwd, "rustc", &["--version"]).and_then(|text| {
-        let mut parts = text.split_whitespace();
-        let _ = parts.next();
-        parts.next().map(|version| version.to_string())
-    })
-}
-
-fn fetch_command_version(cwd: &Path, cmd: &str, args: &[&str]) -> Option<String> {
-    let cmd = cmd.to_string();
-    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    let cwd = cwd.to_path_buf();
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let output = Command::new(cmd).args(args).current_dir(cwd).output().ok();
-        let _ = tx.send(output);
-    });
-
-    let output = rx
-        .recv_timeout(std::time::Duration::from_millis(150))
-        .ok()
-        .flatten()?;
-
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
-fn fetch_python_version(cwd: &Path) -> Option<String> {
-    let output = Command::new("python3")
-        .arg("--version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-
-    let text = if output.status.success() {
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
-    } else {
-        String::from_utf8_lossy(&output.stderr).trim().to_string()
-    };
-
-    if text.is_empty() {
-        return None;
-    }
-
-    let mut parts = text.split_whitespace();
-    let _ = parts.next();
-    parts.next().map(|version| version.to_string())
-}
-
-fn fetch_go_version(cwd: &Path) -> Option<String> {
-    let output = Command::new("go")
-        .arg("version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.split_whitespace()
-        .find(|token| token.starts_with("go1."))
-        .map(|token| token.trim_start_matches("go").to_string())
-}
-
-fn fetch_java_version(cwd: &Path) -> Option<String> {
-    let output = Command::new("java")
-        .arg("-version")
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let text = String::from_utf8_lossy(&output.stderr).to_string();
-    let first_line = text.lines().next()?.trim();
-    first_line
-        .split('"')
-        .nth(1)
-        .map(|quoted| quoted.to_string())
-}
-
-fn rust_toolchain_version_from_path(path: &Path) -> Option<String> {
-    if path.file_name().and_then(|name| name.to_str()) == Some("rust-toolchain.toml") {
-        let content = fs::read_to_string(path).ok()?;
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if let Some(value) = trimmed.strip_prefix("channel") {
-                let value = value.trim();
-                if let Some(raw) = value.strip_prefix('=') {
-                    let raw = raw.trim();
-                    if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
-                        return Some(raw[1..raw.len() - 1].to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    if path.file_name().and_then(|name| name.to_str()) == Some("rust-toolchain") {
-        let content = fs::read_to_string(path).ok()?;
-        for line in content.lines() {
-            let value = line.trim();
-            if value.is_empty() || value.starts_with('#') {
-                continue;
-            }
-            if value.starts_with('[') {
-                break;
-            }
-            return Some(value.to_string());
-        }
-    }
-
-    None
-}
-
 fn styled(color_code: &str, value: &str) -> String {
     format!("\x1b[{color_code}m{value}\x1b[0m")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::Config;
+    use std::sync::Arc;
+
+    fn context(state: MetadataState<LanguageSnapshot>) -> PromptContext {
+        PromptContext {
+            cwd: std::env::temp_dir(),
+            width: 120,
+            exit_code: 0,
+            last_command_duration_ms: None,
+            config: Arc::new(Config::default()),
+            git_state: None,
+            language_state: Some(state),
+            package_state: Some(MetadataState::Absent),
+            environment_state: None,
+        }
+    }
+
+    #[test]
+    fn pending_renders_language_placeholder() {
+        let rendered = render_with_max_width(&context(MetadataState::Pending), 120);
+        assert!(
+            rendered.contains("lang..."),
+            "placeholder missing: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn ready_renders_language_and_version() {
+        let state = MetadataState::Ready {
+            value: LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            },
+            stale: false,
+        };
+        let rendered = render_with_max_width(&context(state), 120);
+        assert!(rendered.contains("1.74"), "version missing: {rendered:?}");
+    }
+
+    #[test]
+    fn absent_renders_nothing() {
+        let rendered = render_with_max_width(&context(MetadataState::Absent), 120);
+        assert!(!rendered.contains("lang..."));
+    }
+
+    #[test]
+    fn narrow_width_drops_low_priority_rprompt_elements() {
+        let ready = MetadataState::Ready {
+            value: LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            },
+            stale: false,
+        };
+        let mut ctx = context(ready);
+        ctx.last_command_duration_ms = Some(123);
+
+        let wide = render_with_max_width(&ctx, 120);
+        assert!(wide.contains("1.74"), "language missing: {wide:?}");
+        assert!(wide.contains("123ms"), "duration missing: {wide:?}");
+
+        // Only enough room for the highest-priority element: the language.
+        let narrow = render_with_max_width(&ctx, 8);
+        assert!(
+            narrow.contains("1.74"),
+            "language should survive: {narrow:?}"
+        );
+        assert!(
+            !narrow.contains("123ms"),
+            "duration must collapse first: {narrow:?}"
+        );
+    }
 }

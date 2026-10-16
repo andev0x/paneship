@@ -1,45 +1,67 @@
+//! State cache with an in-memory LRU store and hard TTL thresholds.
+//!
+//! Git metadata is the hot path, so it lives in [`lru::LruCache`] (default
+//! capacity: 500 working directories). Lookups distinguish fresh, stale and
+//! missing entries so callers can serve stale data immediately while a
+//! background worker refreshes it.
+
+use crate::daemon::telemetry::{self, CacheKind};
+use crate::detectors::infra::EnvironmentSnapshot;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
-const GIT_CACHE_TTL: Duration = Duration::from_secs(5);
+const DEFAULT_CACHE_CAPACITY: usize = 500;
+const DEFAULT_GIT_TTL_MS: u64 = 5_000;
 const LANGUAGE_CACHE_TTL: Duration = Duration::from_secs(60);
 const PACKAGE_CACHE_TTL: Duration = Duration::from_secs(120);
+/// Infrastructure state changes slowly; a 30 s TTL keeps worker churn low.
+const ENVIRONMENT_CACHE_TTL: Duration = Duration::from_secs(30);
 
-pub type LanguageSnapshot = (String, String);
+/// Language/version metadata surfaced in the prompt metadata area.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LanguageSnapshot {
+    /// Canonical language key (matches `[metadata.languages.<key>]`).
+    pub language: String,
+    /// Version pin, when one was extracted from a manifest.
+    pub version: Option<String>,
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Point-in-time Git state for a repository.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GitSnapshot {
+    /// Current branch name (or shortened commit for detached HEAD).
     pub branch: String,
+    /// Full HEAD object id.
     pub head_id: String,
+    /// Number of staged changes.
     pub staged: usize,
+    /// Number of unstaged changes.
     pub unstaged: usize,
+    /// Number of untracked files.
     pub untracked: usize,
 }
 
-impl GitSnapshot {}
+/// Outcome of a cache lookup.
+#[derive(Debug, Clone)]
+pub enum GitLookup {
+    /// Cached snapshot within its TTL.
+    Fresh(GitSnapshot),
+    /// Entry past its TTL, or a pending placeholder. `Some` carries the last
+    /// known snapshot (may be stale), `None` means a refresh is in flight.
+    Stale(Option<GitSnapshot>),
+    /// No entry for this path.
+    Missing,
+}
 
 #[derive(Debug, Clone)]
 struct GitCacheEntry {
+    snapshot: Option<GitSnapshot>,
     expires_at: Instant,
-    value: Option<GitSnapshot>,
-}
-
-type GitCacheMap = HashMap<PathBuf, GitCacheEntry>;
-type LanguageCacheMap = HashMap<PathBuf, TimedCacheEntry<Option<LanguageSnapshot>>>;
-type PackageCacheMap = HashMap<PathBuf, TimedCacheEntry<Option<String>>>;
-type RepoRootCacheMap = HashMap<PathBuf, Option<PathBuf>>;
-
-static GIT_CACHE: OnceLock<Mutex<GitCacheMap>> = OnceLock::new();
-static LANGUAGE_CACHE: OnceLock<Mutex<LanguageCacheMap>> = OnceLock::new();
-static PACKAGE_CACHE: OnceLock<Mutex<PackageCacheMap>> = OnceLock::new();
-static REPO_ROOT_CACHE: OnceLock<Mutex<RepoRootCacheMap>> = OnceLock::new();
-
-fn git_cache() -> &'static Mutex<GitCacheMap> {
-    GIT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[derive(Debug, Clone)]
@@ -49,125 +71,301 @@ struct TimedCacheEntry<T> {
     source_mtime: Option<SystemTime>,
 }
 
-fn language_cache() -> &'static Mutex<LanguageCacheMap> {
-    LANGUAGE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+type GitCache = LruCache<PathBuf, GitCacheEntry>;
+type TimedCache<T> = LruCache<PathBuf, TimedCacheEntry<Option<T>>>;
+type LanguageCache = TimedCache<LanguageSnapshot>;
+type PackageCache = TimedCache<String>;
+type EnvironmentCache = TimedCache<EnvironmentSnapshot>;
+type RepoRootCache = LruCache<PathBuf, Option<PathBuf>>;
+
+static GIT_CACHE: OnceLock<Mutex<GitCache>> = OnceLock::new();
+static LANGUAGE_CACHE: OnceLock<Mutex<LanguageCache>> = OnceLock::new();
+static PACKAGE_CACHE: OnceLock<Mutex<PackageCache>> = OnceLock::new();
+static ENVIRONMENT_CACHE: OnceLock<Mutex<EnvironmentCache>> = OnceLock::new();
+static REPO_ROOT_CACHE: OnceLock<Mutex<RepoRootCache>> = OnceLock::new();
+
+fn capacity() -> NonZeroUsize {
+    let raw = std::env::var("PANESHIP_CACHE_CAPACITY")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CACHE_CAPACITY);
+    NonZeroUsize::new(raw).unwrap_or(NonZeroUsize::MIN)
 }
 
-fn package_cache() -> &'static Mutex<PackageCacheMap> {
-    PACKAGE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn git_ttl() -> Duration {
+    let ms = std::env::var("PANESHIP_GIT_TTL_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_GIT_TTL_MS);
+    Duration::from_millis(ms)
 }
 
-fn repo_root_cache() -> &'static Mutex<RepoRootCacheMap> {
-    REPO_ROOT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-pub fn get_or_compute_git<F>(path: &Path, compute: F) -> Option<GitSnapshot>
-where
-    F: FnOnce() -> Option<GitSnapshot>,
-{
-    let cache_key = git_cache_key(path);
-    if let Some(cached) = get_git(cache_key.as_path()) {
-        return cached;
+fn new_lru<V>() -> LruCache<PathBuf, V> {
+    LruCache::new(capacity())
+}
+
+fn git_cache() -> &'static Mutex<GitCache> {
+    GIT_CACHE.get_or_init(|| Mutex::new(new_lru()))
+}
+
+fn language_cache() -> &'static Mutex<LanguageCache> {
+    LANGUAGE_CACHE.get_or_init(|| Mutex::new(new_lru()))
+}
+
+fn package_cache() -> &'static Mutex<PackageCache> {
+    PACKAGE_CACHE.get_or_init(|| Mutex::new(new_lru()))
+}
+
+fn environment_cache() -> &'static Mutex<EnvironmentCache> {
+    ENVIRONMENT_CACHE.get_or_init(|| Mutex::new(new_lru()))
+}
+
+fn repo_root_cache() -> &'static Mutex<RepoRootCache> {
+    REPO_ROOT_CACHE.get_or_init(|| Mutex::new(new_lru()))
+}
+
+/// Look up the cached Git state for `path` (keyed by repository root).
+pub fn git_lookup(path: &Path) -> GitLookup {
+    let started = Instant::now();
+    let key = git_cache_key(path);
+    let mut cache = lock(git_cache());
+    let Some(entry) = cache.get(&key) else {
+        telemetry::record_lookup(CacheKind::Git, false, started.elapsed());
+        return GitLookup::Missing;
+    };
+
+    if Instant::now() <= entry.expires_at {
+        if let Some(snapshot) = &entry.snapshot {
+            telemetry::record_lookup(CacheKind::Git, true, started.elapsed());
+            return GitLookup::Fresh(snapshot.clone());
+        }
     }
 
-    let fresh = compute();
+    telemetry::record_lookup(CacheKind::Git, false, started.elapsed());
+    GitLookup::Stale(entry.snapshot.clone())
+}
+
+/// Store a freshly computed snapshot using the configured TTL.
+pub fn set_git(path: &Path, snapshot: GitSnapshot) {
+    set_git_with_ttl(path, snapshot, git_ttl());
+}
+
+/// Store a freshly computed snapshot with an explicit TTL (used by tests).
+pub fn set_git_with_ttl(path: &Path, snapshot: GitSnapshot, ttl: Duration) {
+    insert_git(path, Some(snapshot), ttl);
+}
+
+/// Record that a repository exists but its state is not yet known, so the
+/// renderer emits an explicit placeholder instead of dropping the segment.
+pub fn mark_git_pending(path: &Path) {
+    insert_git(path, None, git_ttl());
+}
+
+/// Insert into an LRU, counting only genuine capacity evictions (not
+/// overwrites of an existing key).
+fn put_counting<V>(cache: &mut LruCache<PathBuf, V>, key: PathBuf, value: V, kind: CacheKind) {
+    let replacing = cache.contains(&key);
+    let at_capacity = cache.len() >= cache.cap().get();
+    cache.put(key, value);
+    if at_capacity && !replacing {
+        telemetry::record_eviction(kind);
+    }
+}
+
+fn insert_git(path: &Path, snapshot: Option<GitSnapshot>, ttl: Duration) {
+    let key = git_cache_key(path);
     let entry = GitCacheEntry {
-        expires_at: Instant::now() + GIT_CACHE_TTL,
-        value: fresh.clone(),
+        snapshot,
+        expires_at: Instant::now() + ttl,
+    };
+    put_counting(&mut lock(git_cache()), key, entry, CacheKind::Git);
+}
+
+/// Drop the Git entry for `path`'s repository, forcing a recompute.
+pub fn invalidate_git(path: &Path) {
+    let key = git_cache_key(path);
+    lock(git_cache()).pop(&key);
+}
+
+/// Outcome of a metadata cache lookup. Mirrors [`GitLookup`] so the render path
+/// can distinguish fresh, stale/pending and unknown states.
+#[derive(Debug, Clone)]
+pub enum MetadataLookup<T> {
+    /// Cached value within its TTL and with an unchanged source file.
+    Fresh(T),
+    /// Entry past its TTL, or a pending placeholder. `Some` carries the last
+    /// known value (may be stale), `None` means a refresh is in flight.
+    Stale(Option<T>),
+    /// No entry for this source path.
+    Missing,
+}
+
+fn lookup_metadata<T: Clone>(
+    cache: &Mutex<TimedCache<T>>,
+    path: &Path,
+    kind: CacheKind,
+) -> MetadataLookup<T> {
+    let started = Instant::now();
+    let mut guard = lock(cache);
+    let Some(entry) = guard.get(path).cloned() else {
+        telemetry::record_lookup(kind, false, started.elapsed());
+        return MetadataLookup::Missing;
     };
 
-    if let Ok(mut cache) = git_cache().lock() {
-        cache.insert(cache_key, entry);
+    if Instant::now() > entry.expires_at {
+        telemetry::record_lookup(kind, false, started.elapsed());
+        return MetadataLookup::Stale(entry.value);
     }
 
-    fresh
-}
-
-pub fn get_git_stale(path: &Path) -> Option<GitSnapshot> {
-    let cache = git_cache().lock().ok()?;
-    cache.get(path).and_then(|entry| entry.value.clone())
-}
-
-fn get_git(path: &Path) -> Option<Option<GitSnapshot>> {
-    let mut cache = git_cache().lock().ok()?;
-    let entry = cache.get(path)?.clone();
-    if Instant::now() <= entry.expires_at {
-        return Some(entry.value);
-    }
-    cache.remove(path);
-    None
-}
-
-pub fn get_or_compute_language<F>(path: &Path, compute: F) -> Option<LanguageSnapshot>
-where
-    F: FnOnce() -> Option<LanguageSnapshot>,
-{
-    if let Some(cached) = get_language(path) {
-        return cached;
+    if entry.source_mtime != file_mtime(path) {
+        guard.pop(path);
+        telemetry::record_lookup(kind, false, started.elapsed());
+        return MetadataLookup::Missing;
     }
 
-    let fresh = compute();
-    let entry = TimedCacheEntry {
-        expires_at: Instant::now() + LANGUAGE_CACHE_TTL,
-        value: fresh.clone(),
-        source_mtime: file_mtime(path),
-    };
-
-    if let Ok(mut cache) = language_cache().lock() {
-        cache.insert(path.to_path_buf(), entry);
-    }
-
-    fresh
-}
-
-pub fn get_language(path: &Path) -> Option<Option<LanguageSnapshot>> {
-    let mut cache = language_cache().lock().ok()?;
-    let entry = cache.get(path)?.clone();
-    if Instant::now() <= entry.expires_at {
-        let current_mtime = file_mtime(path);
-        if entry.source_mtime == current_mtime {
-            return Some(entry.value);
+    match entry.value {
+        Some(value) => {
+            telemetry::record_lookup(kind, true, started.elapsed());
+            MetadataLookup::Fresh(value)
+        }
+        None => {
+            telemetry::record_lookup(kind, false, started.elapsed());
+            MetadataLookup::Stale(None)
         }
     }
-    cache.remove(path);
-    None
 }
 
-pub fn get_or_compute_package_version<F>(path: &Path, compute: F) -> Option<String>
-where
-    F: FnOnce() -> Option<String>,
-{
-    if let Some(cached) = get_package_version(path) {
-        return cached;
-    }
-
-    let fresh = compute();
+fn store_metadata<T>(
+    cache: &Mutex<TimedCache<T>>,
+    path: &Path,
+    value: Option<T>,
+    ttl: Duration,
+    kind: CacheKind,
+) {
     let entry = TimedCacheEntry {
-        expires_at: Instant::now() + PACKAGE_CACHE_TTL,
-        value: fresh.clone(),
+        expires_at: Instant::now() + ttl,
+        value,
         source_mtime: file_mtime(path),
     };
-
-    if let Ok(mut cache) = package_cache().lock() {
-        cache.insert(path.to_path_buf(), entry);
-    }
-
-    fresh
+    put_counting(&mut lock(cache), path.to_path_buf(), entry, kind);
 }
 
-pub fn get_package_version(path: &Path) -> Option<Option<String>> {
-    let mut cache = package_cache().lock().ok()?;
-    let entry = cache.get(path)?.clone();
-    if Instant::now() <= entry.expires_at {
-        let current_mtime = file_mtime(path);
-        if entry.source_mtime == current_mtime {
-            return Some(entry.value);
-        }
-    }
-    cache.remove(path);
-    None
+/// Look up cached language metadata for a marker file.
+pub fn language_lookup(marker: &Path) -> MetadataLookup<LanguageSnapshot> {
+    lookup_metadata(language_cache(), marker, CacheKind::Language)
 }
 
+/// Record that a language marker exists but its metadata is not yet known.
+pub fn mark_language_pending(marker: &Path) {
+    store_metadata(
+        language_cache(),
+        marker,
+        None,
+        LANGUAGE_CACHE_TTL,
+        CacheKind::Language,
+    );
+}
+
+/// Store freshly computed language metadata (or a computed negative).
+pub fn store_language(marker: &Path, value: Option<LanguageSnapshot>) {
+    store_metadata(
+        language_cache(),
+        marker,
+        value,
+        LANGUAGE_CACHE_TTL,
+        CacheKind::Language,
+    );
+}
+
+/// Look up cached package metadata for a manifest file.
+pub fn package_lookup(manifest: &Path) -> MetadataLookup<String> {
+    lookup_metadata(package_cache(), manifest, CacheKind::Package)
+}
+
+/// Record that a package manifest exists but its version is not yet known.
+pub fn mark_package_pending(manifest: &Path) {
+    store_metadata(
+        package_cache(),
+        manifest,
+        None,
+        PACKAGE_CACHE_TTL,
+        CacheKind::Package,
+    );
+}
+
+/// Store a freshly computed package version (or a computed negative).
+pub fn store_package(manifest: &Path, value: Option<String>) {
+    store_metadata(
+        package_cache(),
+        manifest,
+        value,
+        PACKAGE_CACHE_TTL,
+        CacheKind::Package,
+    );
+}
+
+/// Look up cached environment metadata for a directory.
+pub fn environment_lookup(path: &Path) -> MetadataLookup<EnvironmentSnapshot> {
+    lookup_metadata(environment_cache(), path, CacheKind::Environment)
+}
+
+/// Record that a directory's environment is not yet known.
+pub fn mark_environment_pending(path: &Path) {
+    store_metadata(
+        environment_cache(),
+        path,
+        None,
+        ENVIRONMENT_CACHE_TTL,
+        CacheKind::Environment,
+    );
+}
+
+/// Store freshly computed environment metadata (or a computed negative).
+pub fn store_environment(path: &Path, value: Option<EnvironmentSnapshot>) {
+    store_metadata(
+        environment_cache(),
+        path,
+        value,
+        ENVIRONMENT_CACHE_TTL,
+        CacheKind::Environment,
+    );
+}
+
+/// Drop all language/package/environment entries. Called when config is
+/// hot-reloaded so icon/theme changes and detector toggles take effect.
+pub fn invalidate_metadata() {
+    lock(language_cache()).clear();
+    lock(package_cache()).clear();
+    lock(environment_cache()).clear();
+}
+
+/// Occupancy of each tracked cache, for the diagnostics view.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CacheSizes {
+    pub git: usize,
+    pub language: usize,
+    pub package: usize,
+    pub environment: usize,
+}
+
+/// Snapshot the current occupancy of every tracked cache.
+pub fn cache_sizes() -> CacheSizes {
+    CacheSizes {
+        git: lock(git_cache()).len(),
+        language: lock(language_cache()).len(),
+        package: lock(package_cache()).len(),
+        environment: lock(environment_cache()).len(),
+    }
+}
+
+/// Compute and cache the repository root for `path` on miss.
 pub fn get_or_compute_repo_root<F>(path: &Path, compute: F) -> Option<PathBuf>
 where
     F: FnOnce() -> Option<PathBuf>,
@@ -177,31 +375,27 @@ where
     }
 
     let fresh = compute();
-    if let Ok(mut cache) = repo_root_cache().lock() {
-        cache.insert(path.to_path_buf(), fresh.clone());
-    }
+    lock(repo_root_cache()).put(path.to_path_buf(), fresh.clone());
     fresh
 }
 
 fn get_repo_root(path: &Path) -> Option<Option<PathBuf>> {
-    let cache = repo_root_cache().lock().ok()?;
-    cache.get(path).cloned().map(Some)?
+    let mut cache = lock(repo_root_cache());
+    cache.get(path).cloned()
 }
 
+/// Resolve (and cache) the repository root containing `path`.
 pub fn repo_root_for(path: &Path) -> Option<PathBuf> {
     get_or_compute_repo_root(path, || find_repo_root(path))
 }
 
 fn find_repo_root(start: &Path) -> Option<PathBuf> {
     for dir in start.ancestors() {
-        // Check if we already know the repo root for this directory
-        if let Ok(cache) = REPO_ROOT_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-        {
-            if let Some(cached) = cache.get(dir) {
-                return cached.clone();
-            }
+        if let Some(cached) = {
+            let mut cache = lock(repo_root_cache());
+            cache.get(dir).cloned()
+        } {
+            return cached;
         }
 
         if dir.join(".git").exists() {
@@ -212,11 +406,221 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
 }
 
 fn git_cache_key(path: &Path) -> PathBuf {
-    repo_root_for(path).unwrap_or_else(|| path.to_path_buf())
+    match repo_root_for(path) {
+        // Canonicalize so symlinked spellings of the same repository
+        // (e.g. `/tmp` vs `/private/tmp`) share one cache entry and the
+        // filesystem watcher can invalidate entries created via the socket.
+        Some(root) => std::fs::canonicalize(&root).unwrap_or(root),
+        None => path.to_path_buf(),
+    }
 }
 
 fn file_mtime(path: &Path) -> Option<SystemTime> {
     fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .ok()
+}
+
+/// Reset and resize the Git cache. Test-only.
+#[cfg(test)]
+pub fn reset_for_tests(new_capacity: usize) {
+    let mut cache = lock(git_cache());
+    cache.clear();
+    cache.resize(NonZeroUsize::new(new_capacity.max(1)).unwrap());
+}
+
+/// Number of Git entries currently held. Test-only.
+#[cfg(test)]
+pub fn git_cache_len_for_tests() -> usize {
+    lock(git_cache()).len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    // Cache tests mutate global state, so they run one at a time.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn guard() -> MutexGuard<'static, ()> {
+        TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn tmp_path(label: &str) -> PathBuf {
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "paneship-cache-test-{}-{label}-{id}",
+            std::process::id()
+        ))
+    }
+
+    fn snapshot(branch: &str) -> GitSnapshot {
+        GitSnapshot {
+            branch: branch.to_string(),
+            head_id: "deadbeef".to_string(),
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+        }
+    }
+
+    #[test]
+    fn ttl_expiry_yields_stale_snapshot() {
+        let _guard = guard();
+        reset_for_tests(16);
+        let path = tmp_path("ttl");
+
+        set_git_with_ttl(&path, snapshot("main"), Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+
+        match git_lookup(&path) {
+            GitLookup::Stale(Some(cached)) => assert_eq!(cached.branch, "main"),
+            other => panic!("expected stale snapshot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fresh_entry_is_reported_fresh() {
+        let _guard = guard();
+        reset_for_tests(16);
+        let path = tmp_path("fresh");
+
+        set_git(&path, snapshot("main"));
+        assert!(matches!(git_lookup(&path), GitLookup::Fresh(_)));
+    }
+
+    #[test]
+    fn pending_marker_reports_stale_none() {
+        let _guard = guard();
+        reset_for_tests(16);
+        let path = tmp_path("pending");
+
+        mark_git_pending(&path);
+        assert!(matches!(git_lookup(&path), GitLookup::Stale(None)));
+    }
+
+    #[test]
+    fn lru_evicts_least_recently_used() {
+        let _guard = guard();
+        reset_for_tests(2);
+        let a = tmp_path("a");
+        let b = tmp_path("b");
+        let c = tmp_path("c");
+
+        set_git(&a, snapshot("a"));
+        set_git(&b, snapshot("b"));
+        set_git(&c, snapshot("c")); // evicts `a`
+
+        assert_eq!(git_cache_len_for_tests(), 2);
+        assert!(matches!(git_lookup(&a), GitLookup::Missing));
+        assert!(matches!(git_lookup(&b), GitLookup::Fresh(_)));
+        assert!(matches!(git_lookup(&c), GitLookup::Fresh(_)));
+    }
+
+    #[test]
+    fn invalidation_after_push_clears_entry() {
+        let _guard = guard();
+        reset_for_tests(16);
+        let repo = tmp_path("repo");
+
+        set_git(&repo, snapshot("feature"));
+        assert!(matches!(git_lookup(&repo), GitLookup::Fresh(_)));
+
+        // Simulates the invalidation triggered by a `git push` event.
+        invalidate_git(&repo);
+
+        assert!(matches!(git_lookup(&repo), GitLookup::Missing));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_repo_paths_share_one_cache_entry() {
+        let _guard = guard();
+        reset_for_tests(8);
+
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base =
+            std::env::temp_dir().join(format!("paneship-cache-link-{}-{id}", std::process::id()));
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(real.join(".git")).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        set_git(&real, snapshot("main"));
+        assert!(
+            matches!(git_lookup(&link), GitLookup::Fresh(_)),
+            "symlinked spelling must hit the same cache entry"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn language_metadata_lifecycle_marks_pending_then_fresh() {
+        let _guard = guard();
+        let marker = tmp_path("lang-marker");
+
+        assert!(matches!(language_lookup(&marker), MetadataLookup::Missing));
+
+        mark_language_pending(&marker);
+        assert!(
+            matches!(language_lookup(&marker), MetadataLookup::Stale(None)),
+            "pending marker must read as in-flight, not missing"
+        );
+
+        store_language(
+            &marker,
+            Some(LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            }),
+        );
+        match language_lookup(&marker) {
+            MetadataLookup::Fresh(snapshot) => {
+                assert_eq!(snapshot.language, "rust");
+                assert_eq!(snapshot.version.as_deref(), Some("1.74"));
+            }
+            _ => panic!("expected a fresh language snapshot"),
+        }
+    }
+
+    #[test]
+    fn package_metadata_lifecycle_marks_pending_then_fresh() {
+        let _guard = guard();
+        let manifest = tmp_path("pkg-manifest");
+
+        mark_package_pending(&manifest);
+        assert!(matches!(
+            package_lookup(&manifest),
+            MetadataLookup::Stale(None)
+        ));
+
+        store_package(&manifest, Some("2.0.0".to_string()));
+        match package_lookup(&manifest) {
+            MetadataLookup::Fresh(version) => assert_eq!(version, "2.0.0"),
+            _ => panic!("expected a fresh package version"),
+        }
+    }
+
+    #[test]
+    fn invalidate_metadata_clears_entries() {
+        let _guard = guard();
+        let marker = tmp_path("invalidate-meta");
+        store_language(
+            &marker,
+            Some(LanguageSnapshot {
+                language: "go".to_string(),
+                version: None,
+            }),
+        );
+        assert!(matches!(language_lookup(&marker), MetadataLookup::Fresh(_)));
+        invalidate_metadata();
+        assert!(matches!(language_lookup(&marker), MetadataLookup::Missing));
+    }
 }

@@ -8,10 +8,11 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     }
 
     let config = &context.config.directory;
-    let icon_width = if config.icon.trim().is_empty() {
+    let icon = context.config.directory_icon();
+    let icon_width = if icon.trim().is_empty() {
         0
     } else {
-        UnicodeWidthStr::width(config.icon.as_str()) + 1
+        UnicodeWidthStr::width(icon) + 1
     };
 
     let path_budget = max_visible_width.saturating_sub(icon_width).max(1);
@@ -22,16 +23,16 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         raw_path
     };
 
-    let mut plain = if config.icon.trim().is_empty() {
+    let mut plain = if icon.trim().is_empty() {
         trimmed_path
     } else {
-        format!("{} {}", config.icon, trimmed_path)
+        format!("{icon} {trimmed_path}")
     };
     if UnicodeWidthStr::width(plain.as_str()) > max_visible_width {
         plain = crate::core::layout::truncate_plain_to_width(plain.as_str(), max_visible_width);
     }
 
-    format!("\x1b[1;34m{}\x1b[0m", plain)
+    format!("\x1b[{}m{}\x1b[0m", context.config.directory_color(), plain)
 }
 
 fn smart_truncate_path(input: &str, budget: usize) -> String {
