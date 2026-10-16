@@ -109,6 +109,7 @@ fn read_battery() -> Option<(u8, String)> {
 /// Parse the `pmset -g batt` output for the first battery percentage/status.
 ///
 /// Example line: `-InternalBattery-0 (id=1234567)\t91%; discharging; 4:12 remaining`.
+#[cfg(any(target_os = "macos", test))]
 fn parse_pmset_battery(text: &str) -> Option<(u8, String)> {
     for line in text.lines() {
         let Some(pct_index) = line.find('%') else {
