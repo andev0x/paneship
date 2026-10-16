@@ -8,17 +8,14 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         return String::new();
     }
 
-    #[cfg(unix)]
-    {
-        if std::env::var("PANESHIP_DAEMON").is_err() {
-            let (_language, package) = crate::daemon::query_metadata(context.cwd.as_path());
+    if std::env::var("PANESHIP_DAEMON").is_err() {
+        let (_language, package) = crate::daemon::query_metadata(context.cwd.as_path());
 
-            if let Some(version) = package {
-                let plain = format!("📦 v{version}");
+        if let Some(version) = package {
+            let plain = format!("📦 v{version}");
 
-                if crate::core::layout::visible_width(plain.as_str()) <= max_visible_width {
-                    return styled(&context.config.metadata.paneship_color, plain.as_str());
-                }
+            if crate::core::layout::visible_width(plain.as_str()) <= max_visible_width {
+                return styled(&context.config.metadata.paneship_color, plain.as_str());
             }
         }
     }

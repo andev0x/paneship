@@ -5,15 +5,14 @@ static GLOBAL: std::alloc::System = std::alloc::System;
 mod benchmark;
 mod cache;
 mod core;
-#[cfg(unix)]
 mod daemon;
+mod ipc;
 mod modules;
 #[cfg(unix)]
 mod tmux;
 
 use std::path::PathBuf;
 
-#[cfg(unix)]
 use benchmark::BenchmarkOptions;
 use core::prompt::PromptContext;
 
@@ -41,8 +40,8 @@ enum RenderShell {
     Cmd,
 }
 
-#[cfg(unix)]
 #[derive(Debug, Clone)]
+#[cfg_attr(not(unix), allow(dead_code))]
 enum CliCommand {
     Init(InitOptions),
     Render(RenderOptions),
@@ -50,19 +49,12 @@ enum CliCommand {
     Top,
     Daemon,
     DaemonPing,
+    Invalidate(PathBuf),
     Help,
 }
 
-#[cfg(not(unix))]
 #[derive(Debug, Clone)]
-enum CliCommand {
-    Render(RenderOptions),
-    Top,
-    Help,
-}
-
-#[cfg(unix)]
-#[derive(Debug, Clone)]
+#[cfg_attr(not(unix), allow(dead_code))]
 struct InitOptions {
     shell: RenderShell,
     onboarding: bool,
@@ -80,28 +72,21 @@ fn main() {
 
     match command {
         CliCommand::Render(options) => {
-            #[cfg(unix)]
+            let cwd = options
+                .cwd
+                .clone()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let width = options.width.unwrap_or(80);
+            if let Some(mut prompt) =
+                daemon::render(cwd, options.exit_code, width, options.duration_ms)
             {
-                let cwd = options
-                    .cwd
-                    .clone()
-                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-                let width = options.width.unwrap_or(80);
-                if let Some(mut prompt) =
-                    daemon::render(cwd, options.exit_code, width, options.duration_ms)
-                {
-                    match options.shell {
-                        RenderShell::Zsh => {
-                            prompt = core::layout::wrap_ansi_for_zsh(prompt.as_str())
-                        }
-                        RenderShell::Bash => {
-                            prompt = core::layout::wrap_ansi_for_bash(prompt.as_str())
-                        }
-                        _ => {}
-                    }
-                    print!("{prompt}");
-                    return;
+                match options.shell {
+                    RenderShell::Zsh => prompt = core::layout::wrap_ansi_for_zsh(prompt.as_str()),
+                    RenderShell::Bash => prompt = core::layout::wrap_ansi_for_bash(prompt.as_str()),
+                    _ => {}
                 }
+                print!("{prompt}");
+                return;
             }
 
             let context = PromptContext::from_inputs(
@@ -118,30 +103,38 @@ fn main() {
             }
             print!("{prompt}");
         }
-        #[cfg(unix)]
-        CliCommand::Benchmark(options) => match benchmark::run(options) {
-            Ok(report) => {
-                println!("{report}");
+        CliCommand::Benchmark(options) => {
+            #[cfg(unix)]
+            {
+                match benchmark::run(options) {
+                    Ok(report) => {
+                        println!("{report}");
+                    }
+                    Err(err) => {
+                        eprintln!("benchmark failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
             }
-            Err(err) => {
-                eprintln!("benchmark failed: {err}");
+            #[cfg(not(unix))]
+            {
+                let _ = options;
+                eprintln!("benchmark is only supported on Unix");
                 std::process::exit(1);
             }
-        },
+        }
         CliCommand::Top => {
             if let Err(err) = benchmark::run_top() {
                 eprintln!("top benchmark failed: {err}");
                 std::process::exit(1);
             }
         }
-        #[cfg(unix)]
         CliCommand::Daemon => {
             if let Err(err) = daemon::run() {
                 eprintln!("daemon error: {err}");
                 std::process::exit(1);
             }
         }
-        #[cfg(unix)]
         CliCommand::DaemonPing => {
             if daemon::ping() {
                 println!("ok");
@@ -149,9 +142,22 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        #[cfg(unix)]
+        CliCommand::Invalidate(cwd) => {
+            if !daemon::invalidate(&cwd) {
+                std::process::exit(1);
+            }
+        }
         CliCommand::Init(options) => {
-            handle_init(options);
+            #[cfg(unix)]
+            {
+                handle_init(options);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = options;
+                eprintln!("init is only supported on Unix shells");
+                std::process::exit(1);
+            }
         }
         CliCommand::Help => {
             println!("{}", usage());
@@ -189,9 +195,12 @@ fn parse_cli(args: Vec<String>) -> Result<CliCommand, String> {
         return Ok(CliCommand::Top);
     }
 
-    #[cfg(unix)]
     if args[0] == "daemon" {
         return parse_daemon_args(&args[1..]);
+    }
+
+    if args[0] == "invalidate" {
+        return parse_invalidate_args(&args[1..]);
     }
 
     #[cfg(unix)]
@@ -247,6 +256,10 @@ fn bash_init_script() -> String {
         "",
         "paneship_precmd() {",
         "    local exit_code=$?",
+        "    case \"$PANESHIP_LAST_CMD\" in",
+        "        git\\ *) \"$PANESHIP_BIN\" invalidate --cwd \"$PWD\" > /dev/null 2>&1 ;;",
+        "    esac",
+        "    PANESHIP_LAST_CMD=\"\"",
         "    local duration_arg=()",
         "    if [[ -n \"$PANESHIP_START_TIME\" ]]; then",
         "        local end_time=$(date +%s%3N)",
@@ -259,6 +272,7 @@ fn bash_init_script() -> String {
         "",
         "paneship_preexec() {",
         "    PANESHIP_START_TIME=$(date +%s%3N)",
+        "    PANESHIP_LAST_CMD=\"$BASH_COMMAND\"",
         "}",
         "",
         "if [[ \";$PROMPT_COMMAND;\" != *\";paneship_precmd;\"* ]]; then",
@@ -285,13 +299,19 @@ fn zsh_init_script() -> String {
         "zmodload zsh/datetime",
         "autoload -Uz add-zsh-hook",
         "typeset -gF PANESHIP_CMD_START=0",
+        "typeset -g PANESHIP_LAST_CMD=\"\"",
         "",
         "paneship_preexec() {",
         "    PANESHIP_CMD_START=$EPOCHREALTIME",
+        "    PANESHIP_LAST_CMD=\"$1\"",
         "}",
         "",
         "paneship_precmd() {",
         "    local exit_code=$?",
+        "    if [[ \"$PANESHIP_LAST_CMD\" == git\\ * ]]; then",
+        "        \"$PANESHIP_BIN\" invalidate --cwd \"$PWD\" > /dev/null 2>&1",
+        "    fi",
+        "    PANESHIP_LAST_CMD=\"\"",
         "    local -a duration_arg",
         "    if (( PANESHIP_CMD_START > 0 )); then",
         "        local -F now=$EPOCHREALTIME",
@@ -332,8 +352,16 @@ fn fish_init_script() -> String {
         "    disown",
         "end",
         "",
+        "function fish_preexec --on-event fish_preexec",
+        "    set -g PANESHIP_LAST_CMD $argv",
+        "end",
+        "",
         "function fish_prompt",
         "    set -l exit_code $status",
+        "    if test -n \"$PANESHIP_LAST_CMD\"; and string match -q 'git *' -- \"$PANESHIP_LAST_CMD\"",
+        "        paneship invalidate --cwd $PWD >/dev/null 2>&1",
+        "    end",
+        "    set -g PANESHIP_LAST_CMD \"\"",
         "    set -l duration_arg",
         "    if test -n \"$CMD_DURATION\"",
         "        set duration_arg --duration-ms \"$CMD_DURATION\"",
@@ -347,12 +375,27 @@ fn fish_init_script() -> String {
 #[cfg(unix)]
 fn powershell_init_script() -> String {
     [
-        "function prompt {",
-        "    $lastExitCode = if ($null -eq $?) { 0 } else { [int](-not $?) }",
-        "    & paneship render --shell powershell --exit-code $lastExitCode --width $Host.UI.RawUI.WindowSize.Width --cwd $PWD",
-        "}",
         "if (!(Get-Command paneship -ErrorAction SilentlyContinue)) { return }",
         "if (!(paneship daemon ping)) { Start-Process paneship -ArgumentList \"daemon\" -NoNewWindow }",
+        "$global:PaneshipGitCommand = $false",
+        "if (Get-Module -ListAvailable -Name PSReadLine) {",
+        "    try {",
+        "        Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {",
+        "            $line = $null; $cursor = $null",
+        "            [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)",
+        "            if ($line -match '^\\s*git\\s') { $global:PaneshipGitCommand = $true } else { $global:PaneshipGitCommand = $false }",
+        "            [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()",
+        "        }",
+        "    } catch {}",
+        "}",
+        "function prompt {",
+        "    $lastExitCode = if ($null -eq $?) { 0 } else { [int](-not $?) }",
+        "    if ($global:PaneshipGitCommand) {",
+        "        try { & paneship invalidate --cwd $PWD 2>$null | Out-Null } catch {}",
+        "        $global:PaneshipGitCommand = $false",
+        "    }",
+        "    & paneship render --shell powershell --exit-code $lastExitCode --width $Host.UI.RawUI.WindowSize.Width --cwd $PWD",
+        "}",
     ]
     .join("\n")
 }
@@ -360,8 +403,19 @@ fn powershell_init_script() -> String {
 #[cfg(unix)]
 fn nushell_init_script() -> String {
     [
+        "$env.PANESHIP_LAST_CMD = \"\"",
+        "$env.config = ($env.config? | default {})",
+        "$env.config.hooks = ($env.config.hooks? | default {})",
+        "$env.config.hooks.pre_execution = (($env.config.hooks.pre_execution? | default []) | append {||",
+        "    let line = (try { commandline } catch { \"\" })",
+        "    $env.PANESHIP_LAST_CMD = ($line | default \"\" | into string)",
+        "})",
         "$env.PROMPT_COMMAND = { ||",
-        "    paneship render --shell nushell --exit-code $env.LAST_EXIT_CODE --width (term size).columns --cwd $env.PWD",
+        "    if ($env.PANESHIP_LAST_CMD | default \"\" | str starts-with \"git \") {",
+        "        ^paneship invalidate --cwd $env.PWD | ignore",
+        "    }",
+        "    $env.PANESHIP_LAST_CMD = \"\"",
+        "    ^paneship render --shell nushell --exit-code $env.LAST_EXIT_CODE --width (term size).columns --cwd $env.PWD",
         "}",
         "$env.PROMPT_COMMAND_RIGHT = \"\"",
     ]
@@ -655,13 +709,37 @@ fn parse_benchmark_args(args: &[String]) -> Result<CliCommand, String> {
     Ok(CliCommand::Benchmark(options))
 }
 
-#[cfg(unix)]
 fn parse_daemon_args(args: &[String]) -> Result<CliCommand, String> {
     match args {
         [] => Ok(CliCommand::Daemon),
         [subcommand] if subcommand == "ping" => Ok(CliCommand::DaemonPing),
         [unknown, ..] => Err(format!("unknown daemon argument: {unknown}")),
     }
+}
+
+fn parse_invalidate_args(args: &[String]) -> Result<CliCommand, String> {
+    let mut cwd: Option<PathBuf> = None;
+    let mut idx = 0;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--cwd" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "missing value for --cwd".to_string())?;
+                cwd = Some(PathBuf::from(value));
+            }
+            unknown => {
+                return Err(format!("unknown invalidate argument: {unknown}"));
+            }
+        }
+        idx += 1;
+    }
+
+    Ok(CliCommand::Invalidate(cwd.unwrap_or_else(|| {
+        std::env::current_dir().unwrap_or_default()
+    })))
 }
 
 #[cfg(unix)]
@@ -708,5 +786,5 @@ fn parse_init_args(args: &[String]) -> Result<CliCommand, String> {
 }
 
 fn usage() -> &'static str {
-    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top\n  paneship daemon [ping]\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
+    "Paneship - high-performance shell prompt\n\nUSAGE:\n  paneship [render] [--exit-code <code>] [--width <cols>] [--cwd <path>] [--duration-ms <ms>] [--shell <name>]\n  paneship init <shell> [--onboarding|to onboarding]\n  paneship benchmark [--iterations <n>] [--panes <n>] [--compare-starship] [--width <cols>] [--cwd <path>] [--exit-code <code>]\n  paneship top\n  paneship daemon [ping]\n  paneship invalidate [--cwd <path>]\n  paneship help\n\nSHELLS:\n  bash, zsh, fish, powershell, nushell, elvish, xonsh, tcsh, ion, cmd\n\nOPTIONS:\n  -s, --exit-code <code>    Last command exit code\n  -w, --width <cols>        Prompt width budget\n      --cwd <path>          Directory to render the prompt for\n      --duration-ms <ms>    Last command duration in milliseconds\n      --shell <name>        Prompt output mode (default: plain)\n\nINIT OPTIONS:\n  paneship init <shell>     Print shell init script (for eval)\n  paneship init <shell> to onboarding\n                            Append paneship block to shell config file\n  paneship init <shell> --onboarding\n                            Same as 'to onboarding'\n\nBENCHMARK OPTIONS:\n  -n, --iterations <n>      Renders per pane (default: 200)\n  -p, --panes <n>           Number of concurrent panes (default: 4)\n      --compare-starship    Include direct Starship comparison"
 }

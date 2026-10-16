@@ -121,13 +121,10 @@ pub fn compute_metadata_for_daemon(path: &Path) {
 }
 
 fn detect_language_version(cwd: &Path) -> Option<(String, String)> {
-    #[cfg(unix)]
-    {
-        if std::env::var("PANESHIP_DAEMON").is_err() {
-            let (language, _package) = crate::daemon::query_metadata(cwd);
-            if language.is_some() {
-                return language;
-            }
+    if std::env::var("PANESHIP_DAEMON").is_err() {
+        let (language, _package) = crate::daemon::query_metadata(cwd);
+        if language.is_some() {
+            return language;
         }
     }
 

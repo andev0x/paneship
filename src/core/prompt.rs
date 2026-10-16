@@ -1,4 +1,5 @@
 use crate::core::config::Config;
+use crate::modules::git::GitResolution;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -8,6 +9,9 @@ pub struct PromptContext {
     pub exit_code: i32,
     pub last_command_duration_ms: Option<u64>,
     pub config: std::sync::Arc<Config>,
+    /// Git state pre-resolved by the daemon render path. When `None` the Git
+    /// module resolves it (via the daemon socket or a bounded local compute).
+    pub git_state: Option<GitResolution>,
 }
 
 impl PromptContext {
@@ -47,6 +51,7 @@ impl PromptContext {
             exit_code,
             last_command_duration_ms,
             config,
+            git_state: None,
         }
     }
 }

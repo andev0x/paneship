@@ -261,7 +261,14 @@ sequenceDiagram
 ```
 
 ### Smart Invalidation
-The background daemon listens on a local Unix domain socket. It monitors directory structure modifications, active git HEAD states, and exit statuses to automatically invalidate dirty cache entries without adding overhead to your shell prompt rendering thread.
+The background daemon listens on a platform-native local socket (Unix domain socket on macOS/Linux/WSL2, named pipe on Windows). It watches each active repository's Git metadata — `.git/HEAD`, `.git/index`, `.git/packed-refs` and `.git/refs/` (heads, remotes and tags) — and coalesces bursts of events (for example during `git rebase` or `git checkout`) with a short debounce window before invalidating the affected cache entries.
+
+Shell hooks also emit an explicit `INVALIDATE_CWD(path)` signal right after any command that starts with `git `, so operations like `git push` or `git fetch` (which update remote-tracking refs) are reflected on the very next prompt without waiting for a filesystem event.
+
+### Cache & Fallback Guarantees
+Git state is held in an in-memory LRU store (default capacity: 500 working directories) with a hard 5-second TTL. When an entry expires, the daemon serves the last known value immediately while a background worker refreshes it (`stale = true`). If a repository is known but its state cannot be computed within the render budget (for example on a very large monorepo), Paneship renders an explicit `[git...]` placeholder instead of silently dropping the segment, and logs the failure to `~/.cache/paneship/daemon.log`.
+
+> Tune the cache with `PANESHIP_CACHE_CAPACITY` and the Git TTL with `PANESHIP_GIT_TTL_MS`.
 
 ---
 
@@ -291,6 +298,7 @@ The background daemon listens on a local Unix domain socket. It monitors directo
 ### Daemon Administration
 - `paneship daemon`: Spawns the background socket server daemon.
 - `paneship daemon ping`: Verifies that the daemon is active and responding.
+- `paneship invalidate [--cwd <path>]`: Signals the daemon that Git metadata under `<path>` changed (used by the shell hooks).
 
 ### Performance Testing & Monitoring
 - `paneship benchmark`: Runs multiple prompt iterations to verify rendering speed.
@@ -317,7 +325,7 @@ If it is not responding, you can start the daemon manually or verify your shell 
 ##  Roadmap
 
 ### Core Enhancements
-- [ ] **Cross-Platform Daemon** – Port the Unix domain socket daemon to Windows (Named Pipes) for performance parity on PowerShell/CMD.
+- [x] **Cross-Platform Daemon** – The IPC transport is abstracted behind an `IpcListener` trait with Unix domain socket and Windows named pipe adapters.
 - [ ] **WASM Plugin System** – Allow users to create custom prompt modules using any language that compiles to WebAssembly.
 - [ ] **Interactive Configurator** – A built-in TUI (`paneship config`) to visually customize themes and modules.
 - [ ] **Right-Side Prompt (RPROMPT)** – Native support for right-aligned metadata in Zsh, Fish, and Powerline-compatible shells.
