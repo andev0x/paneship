@@ -57,7 +57,7 @@ health = false      # opt-in CPU load pressure / low battery (Linux + macOS)
 # ---------------------------------------------------------------------------
 
 [directory]
-# Empty = use the active icon profile.
+# Empty = detected project language icon, or the host OS icon outside projects.
 icon = ""
 # Number of path segments to keep before truncation.
 truncation_length = 3

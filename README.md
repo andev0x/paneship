@@ -205,7 +205,7 @@ nix_direnv = true      # IN_NIX_SHELL and .envrc state
 health = false         # opt-in CPU load pressure / low battery
 
 [directory]
-icon = ""              # empty = active icon profile
+icon = ""              # empty = detected language icon, else host OS icon
 truncation_length = 3
 truncate_to_repo = true
 
@@ -225,6 +225,8 @@ paneship_color = ""    # empty = active theme
 ```
 
 > **Note**: An emoji-based configuration is available in the [example_config.toml](./example_config.toml) file. Switching `profile = "emoji"` or `"minimal"` updates every segment at once.
+>
+> The directory prefix is context-aware: inside a project it shows the detected language glyph (Rust, Node, Go, Python, …), and outside any project — including the home directory — it shows the host operating system glyph (macOS, Windows, Linux, BSD). Set `[directory].icon` to pin a single glyph everywhere.
 
 ### Configuration Reference
 
@@ -257,7 +259,7 @@ paneship_color = ""    # empty = active theme
 #### `[directory]`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `icon` | String | `""` | Icon prefix before the path. Empty falls back to the active icon profile. |
+| `icon` | String | `""` | Icon prefix before the path. Empty uses the detected project language icon, or the host OS icon (macOS/Windows/Linux/BSD) outside projects. |
 | `truncation_length` | Integer | `3` | Maximum folder depth to display before truncating. |
 | `truncate_to_repo` | Boolean | `true` | If true, automatically hides paths outside the Git repository root when inside a repo. |
 

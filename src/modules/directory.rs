@@ -1,4 +1,4 @@
-use crate::core::prompt::PromptContext;
+use crate::core::prompt::{MetadataState, PromptContext};
 use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
 
@@ -8,7 +8,9 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     }
 
     let config = &context.config.directory;
-    let icon = context.config.directory_icon();
+    let icon = context
+        .config
+        .directory_icon_for(language_for_icon(context));
     let icon_width = if icon.trim().is_empty() {
         0
     } else {
@@ -33,6 +35,39 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     }
 
     format!("\x1b[{}m{}\x1b[0m", context.config.directory_color(), plain)
+}
+
+/// Language key that owns the directory prefix icon.
+///
+/// The daemon normally supplies a resolved snapshot; while it is pending (or
+/// when no daemon is running) the cheap marker probe recovers the language
+/// without parsing a manifest. A directory with no marker is a non-project
+/// directory and renders the host OS icon instead.
+fn language_for_icon(context: &PromptContext) -> Option<&str> {
+    // The shell's home directory is a navigation root, not a project. Stray
+    // manifests there (common after global package installs) must not claim the
+    // directory prefix; show the host OS glyph instead.
+    if is_home_directory(context.cwd.as_path()) {
+        return None;
+    }
+
+    match &context.language_state {
+        Some(MetadataState::Ready { value, .. }) => Some(value.language.as_str()),
+        Some(MetadataState::Pending) | None => {
+            let matched = crate::detectors::find_marker(context.cwd.as_path())?;
+            crate::detectors::registry()
+                .get(matched.detector_index)
+                .map(|detector| detector.name())
+        }
+        Some(MetadataState::Absent) => None,
+    }
+}
+
+fn is_home_directory(path: &Path) -> bool {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .is_some_and(|home| path == home)
 }
 
 fn smart_truncate_path(input: &str, budget: usize) -> String {
@@ -220,5 +255,105 @@ fn join_path_display(prefix: &str, hidden_prefix: bool, segments: &[String]) -> 
         format!("{prefix}/.../{}", segments.join("/"))
     } else {
         format!("{prefix}/{}", segments.join("/"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cache::LanguageSnapshot;
+    use crate::core::config::Config;
+    use crate::core::prompt::{MetadataState, PromptContext};
+    use std::sync::Arc;
+
+    fn context(language: MetadataState<LanguageSnapshot>) -> PromptContext {
+        PromptContext {
+            cwd: std::env::temp_dir(),
+            width: 120,
+            exit_code: 0,
+            last_command_duration_ms: None,
+            config: Arc::new(Config::default()),
+            git_state: None,
+            language_state: Some(language),
+            package_state: None,
+            environment_state: None,
+        }
+    }
+
+    fn ready(language: &str) -> MetadataState<LanguageSnapshot> {
+        MetadataState::Ready {
+            value: LanguageSnapshot {
+                language: language.to_string(),
+                version: None,
+            },
+            stale: false,
+        }
+    }
+
+    #[test]
+    fn project_directory_uses_the_language_icon() {
+        let ctx = context(ready("rust"));
+        let rendered = render_with_max_width(&ctx, 80);
+        let expected = ctx.config.language_style("rust").icon;
+        assert!(
+            rendered.contains(&expected),
+            "expected the rust glyph {expected:?} in {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(ctx.config.os_icon()),
+            "a project directory must not fall back to the OS glyph: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn non_project_directory_uses_the_os_icon() {
+        let ctx = context(MetadataState::Absent);
+        let rendered = render_with_max_width(&ctx, 80);
+        assert!(
+            rendered.contains(ctx.config.os_icon()),
+            "expected the OS glyph {:?} in {rendered:?}",
+            ctx.config.os_icon()
+        );
+    }
+
+    #[test]
+    fn home_directory_uses_the_os_icon_even_with_a_stray_manifest() {
+        let Some(home) = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+        else {
+            return;
+        };
+
+        let mut ctx = context(ready("node"));
+        ctx.cwd = home;
+
+        let rendered = render_with_max_width(&ctx, 80);
+        assert!(
+            rendered.contains(ctx.config.os_icon()),
+            "home should use the OS glyph: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(&ctx.config.language_style("node").icon),
+            "home must not borrow a stray project language glyph: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_directory_icon_wins_over_language_and_os() {
+        let mut ctx = context(ready("rust"));
+        let mut config = Config::default();
+        config.directory.icon = "CUSTOM".to_string();
+        ctx.config = Arc::new(config);
+
+        let rendered = render_with_max_width(&ctx, 80);
+        assert!(
+            rendered.contains("CUSTOM"),
+            "explicit icon missing: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(ctx.config.os_icon()),
+            "explicit icon must suppress the OS fallback: {rendered:?}"
+        );
     }
 }

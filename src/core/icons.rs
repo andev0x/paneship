@@ -15,6 +15,11 @@
 //!
 //! Any explicit per-section value (`directory.icon`, `status.success_icon`, …)
 //! still wins over the profile, so existing configurations keep working.
+//!
+//! The directory prefix is special: when `[directory].icon` is empty it uses
+//! the detected project language glyph, and falls back to the host operating
+//! system glyph for directories that do not belong to a project (including the
+//! home directory).
 
 /// Built-in icon profiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +92,8 @@ pub struct ProfileIcons {
     pub languages: &'static [(&'static str, &'static str)],
     /// Infrastructure/environment glyphs, keyed by `EnvironmentKind::key()`.
     pub environments: &'static [(&'static str, &'static str)],
+    /// Operating-system glyphs, keyed by [`current_os_key`].
+    pub operating_systems: &'static [(&'static str, &'static str)],
 }
 
 impl ProfileIcons {
@@ -105,6 +112,27 @@ impl ProfileIcons {
             .find(|(name, _)| *name == key)
             .map(|(_, icon)| *icon)
     }
+
+    /// Icon for a normalized operating-system key (e.g. `"macos"`).
+    pub fn operating_system(&self, key: &str) -> Option<&'static str> {
+        self.operating_systems
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, icon)| *icon)
+    }
+}
+
+/// Normalize `std::env::consts::OS` into a key used by
+/// [`ProfileIcons::operating_system`].
+pub fn current_os_key() -> &'static str {
+    match std::env::consts::OS {
+        "macos" | "ios" => "macos",
+        "windows" => "windows",
+        "linux" => "linux",
+        "android" => "android",
+        "freebsd" | "openbsd" | "netbsd" | "dragonfly" => "bsd",
+        other => other,
+    }
 }
 
 static NERD_FONT: ProfileIcons = ProfileIcons {
@@ -122,14 +150,46 @@ static NERD_FONT: ProfileIcons = ProfileIcons {
     placeholder_lang: "[lang...]",
     languages: &[
         ("rust", "\u{e7a8}"),
-        ("node", "\u{f17a}"),
+        ("node", "\u{e718}"),
         ("bun", "\u{e76f}"),
+        ("deno", "\u{e7c0}"),
         ("python", "\u{e73c}"),
         ("go", "\u{e627}"),
-        ("deno", "\u{e7c0}"),
-        ("ruby", "\u{f0d7}"),
+        ("ruby", "\u{e791}"),
         ("php", "\u{e608}"),
-        ("java", "\u{e256}"),
+        ("java", "\u{e738}"),
+        ("typescript", "\u{e628}"),
+        ("javascript", "\u{e60c}"),
+        ("vue", "\u{e6a0}"),
+        ("svelte", "\u{e697}"),
+        ("astro", "\u{e6b3}"),
+        ("c", "\u{e61e}"),
+        ("cpp", "\u{e61d}"),
+        ("csharp", "\u{f031b}"),
+        ("fsharp", "\u{e7a7}"),
+        ("swift", "\u{e755}"),
+        ("kotlin", "\u{e634}"),
+        ("scala", "\u{e737}"),
+        ("dart", "\u{e798}"),
+        ("zig", "\u{e6a9}"),
+        ("lua", "\u{e620}"),
+        ("elixir", "\u{e62d}"),
+        ("erlang", "\u{e7b1}"),
+        ("haskell", "\u{e61f}"),
+        ("ocaml", "\u{e67a}"),
+        ("clojure", "\u{e768}"),
+        ("r", "\u{f07d4}"),
+        ("julia", "\u{e624}"),
+        ("perl", "\u{e769}"),
+        ("crystal", "\u{e62f}"),
+        ("nim", "\u{e677}"),
+        ("solidity", "\u{e656}"),
+        ("terraform", "\u{e69a}"),
+        ("nix", "\u{f313}"),
+        ("elm", "\u{e62c}"),
+        ("gleam", "\u{f005}"),
+        ("odin", "\u{f07e2}"),
+        ("prisma", "\u{e684}"),
     ],
     environments: &[
         ("kubernetes", "\u{f10fe}"),
@@ -141,6 +201,13 @@ static NERD_FONT: ProfileIcons = ProfileIcons {
         ("direnv", "\u{f0c5}"),
         ("load", "\u{f0e4}"),
         ("battery", "\u{f240}"),
+    ],
+    operating_systems: &[
+        ("macos", "\u{f179}"),
+        ("windows", "\u{f17a}"),
+        ("linux", "\u{f17c}"),
+        ("android", "\u{f17b}"),
+        ("bsd", "\u{f30c}"),
     ],
 };
 
@@ -161,12 +228,44 @@ static EMOJI: ProfileIcons = ProfileIcons {
         ("rust", "\u{1f980}"),
         ("node", "\u{2b22}"),
         ("bun", "\u{1f95f}"),
+        ("deno", "\u{1f995}"),
         ("python", "\u{1f40d}"),
         ("go", "\u{1f439}"),
-        ("deno", "\u{1f995}"),
         ("ruby", "\u{1f48e}"),
         ("php", "\u{1f418}"),
         ("java", "\u{2615}"),
+        ("typescript", "\u{1f7e6}"),
+        ("javascript", "\u{1f7e8}"),
+        ("vue", "\u{1f596}"),
+        ("svelte", "\u{1f9e1}"),
+        ("astro", "\u{1f680}"),
+        ("c", "C"),
+        ("cpp", "C++"),
+        ("csharp", "C#"),
+        ("fsharp", "F#"),
+        ("swift", "\u{1f426}"),
+        ("kotlin", "\u{1f7ea}"),
+        ("scala", "\u{1f53b}"),
+        ("dart", "\u{1f3af}"),
+        ("zig", "\u{26a1}"),
+        ("lua", "\u{1f319}"),
+        ("elixir", "\u{1f4a7}"),
+        ("erlang", "\u{1f4de}"),
+        ("haskell", "\u{03bb}"),
+        ("ocaml", "\u{1f42b}"),
+        ("clojure", "\u{1f343}"),
+        ("r", "\u{1f4ca}"),
+        ("julia", "\u{1f9ee}"),
+        ("perl", "\u{1f42a}"),
+        ("crystal", "\u{1f4a0}"),
+        ("nim", "\u{1f451}"),
+        ("solidity", "\u{26d3}"),
+        ("terraform", "\u{1f3d7}"),
+        ("nix", "\u{2744}"),
+        ("elm", "\u{1f333}"),
+        ("gleam", "\u{2b50}"),
+        ("odin", "\u{1fa84}"),
+        ("prisma", "\u{1f537}"),
     ],
     environments: &[
         ("kubernetes", "\u{2638}"),
@@ -178,6 +277,13 @@ static EMOJI: ProfileIcons = ProfileIcons {
         ("direnv", "\u{1f4c1}"),
         ("load", "\u{1f525}"),
         ("battery", "\u{1f50b}"),
+    ],
+    operating_systems: &[
+        ("macos", "\u{1f34e}"),
+        ("windows", "\u{1fa9f}"),
+        ("linux", "\u{1f427}"),
+        ("android", "\u{1f916}"),
+        ("bsd", "\u{1f608}"),
     ],
 };
 
@@ -196,14 +302,46 @@ static MINIMAL: ProfileIcons = ProfileIcons {
     placeholder_lang: "[lang...]",
     languages: &[
         ("rust", "rs:"),
-        ("node", "js:"),
+        ("node", "node:"),
         ("bun", "bun:"),
+        ("deno", "deno:"),
         ("python", "py:"),
         ("go", "go:"),
-        ("deno", "deno:"),
         ("ruby", "rb:"),
         ("php", "php:"),
         ("java", "java:"),
+        ("typescript", "ts:"),
+        ("javascript", "js:"),
+        ("vue", "vue:"),
+        ("svelte", "svelte:"),
+        ("astro", "astro:"),
+        ("c", "c:"),
+        ("cpp", "c++:"),
+        ("csharp", "cs:"),
+        ("fsharp", "fs:"),
+        ("swift", "swift:"),
+        ("kotlin", "kt:"),
+        ("scala", "scala:"),
+        ("dart", "dart:"),
+        ("zig", "zig:"),
+        ("lua", "lua:"),
+        ("elixir", "ex:"),
+        ("erlang", "erl:"),
+        ("haskell", "hs:"),
+        ("ocaml", "ml:"),
+        ("clojure", "clj:"),
+        ("r", "r:"),
+        ("julia", "jl:"),
+        ("perl", "pl:"),
+        ("crystal", "cr:"),
+        ("nim", "nim:"),
+        ("solidity", "sol:"),
+        ("terraform", "tf:"),
+        ("nix", "nix:"),
+        ("elm", "elm:"),
+        ("gleam", "gleam:"),
+        ("odin", "odin:"),
+        ("prisma", "prisma:"),
     ],
     environments: &[
         ("kubernetes", "k8s:"),
@@ -215,6 +353,13 @@ static MINIMAL: ProfileIcons = ProfileIcons {
         ("direnv", "direnv:"),
         ("load", "load:"),
         ("battery", "batt:"),
+    ],
+    operating_systems: &[
+        ("macos", "mac:"),
+        ("windows", "win:"),
+        ("linux", "linux:"),
+        ("android", "android:"),
+        ("bsd", "bsd:"),
     ],
 };
 
@@ -326,12 +471,44 @@ static THEME_DEFAULT: ThemeColors = ThemeColors {
         ("rust", "1;33"),
         ("node", "1;32"),
         ("bun", "1;38;5;208"),
+        ("deno", "1;32"),
         ("python", "1;34"),
         ("go", "1;36"),
-        ("deno", "1;32"),
         ("ruby", "1;31"),
         ("php", "1;35"),
         ("java", "1;31"),
+        ("typescript", "1;34"),
+        ("javascript", "1;33"),
+        ("vue", "1;32"),
+        ("svelte", "1;31"),
+        ("astro", "1;35"),
+        ("c", "1;34"),
+        ("cpp", "1;34"),
+        ("csharp", "1;35"),
+        ("fsharp", "1;36"),
+        ("swift", "1;33"),
+        ("kotlin", "1;35"),
+        ("scala", "1;31"),
+        ("dart", "1;36"),
+        ("zig", "1;33"),
+        ("lua", "1;34"),
+        ("elixir", "1;35"),
+        ("erlang", "1;31"),
+        ("haskell", "1;35"),
+        ("ocaml", "1;33"),
+        ("clojure", "1;32"),
+        ("r", "1;34"),
+        ("julia", "1;35"),
+        ("perl", "1;36"),
+        ("crystal", "1;37"),
+        ("nim", "1;33"),
+        ("solidity", "1;37"),
+        ("terraform", "1;35"),
+        ("nix", "1;36"),
+        ("elm", "1;34"),
+        ("gleam", "1;35"),
+        ("odin", "1;34"),
+        ("prisma", "1;37"),
     ],
 };
 
@@ -356,6 +533,38 @@ static THEME_DRACULA: ThemeColors = ThemeColors {
         ("ruby", "38;5;203"),
         ("php", "38;5;183"),
         ("java", "38;5;203"),
+        ("typescript", "38;5;117"),
+        ("javascript", "38;5;228"),
+        ("vue", "38;5;84"),
+        ("svelte", "38;5;203"),
+        ("astro", "38;5;212"),
+        ("c", "38;5;117"),
+        ("cpp", "38;5;117"),
+        ("csharp", "38;5;141"),
+        ("fsharp", "38;5;123"),
+        ("swift", "38;5;215"),
+        ("kotlin", "38;5;141"),
+        ("scala", "38;5;203"),
+        ("dart", "38;5;117"),
+        ("zig", "38;5;215"),
+        ("lua", "38;5;117"),
+        ("elixir", "38;5;141"),
+        ("erlang", "38;5;203"),
+        ("haskell", "38;5;141"),
+        ("ocaml", "38;5;215"),
+        ("clojure", "38;5;84"),
+        ("r", "38;5;117"),
+        ("julia", "38;5;141"),
+        ("perl", "38;5;123"),
+        ("crystal", "38;5;255"),
+        ("nim", "38;5;215"),
+        ("solidity", "38;5;255"),
+        ("terraform", "38;5;141"),
+        ("nix", "38;5;123"),
+        ("elm", "38;5;117"),
+        ("gleam", "38;5;212"),
+        ("odin", "38;5;117"),
+        ("prisma", "38;5;255"),
     ],
 };
 
@@ -380,6 +589,38 @@ static THEME_NORD: ThemeColors = ThemeColors {
         ("ruby", "38;5;174"),
         ("php", "38;5;183"),
         ("java", "38;5;174"),
+        ("typescript", "38;5;110"),
+        ("javascript", "38;5;222"),
+        ("vue", "38;5;150"),
+        ("svelte", "38;5;174"),
+        ("astro", "38;5;216"),
+        ("c", "38;5;110"),
+        ("cpp", "38;5;110"),
+        ("csharp", "38;5;216"),
+        ("fsharp", "38;5;109"),
+        ("swift", "38;5;216"),
+        ("kotlin", "38;5;216"),
+        ("scala", "38;5;174"),
+        ("dart", "38;5;110"),
+        ("zig", "38;5;222"),
+        ("lua", "38;5;110"),
+        ("elixir", "38;5;216"),
+        ("erlang", "38;5;174"),
+        ("haskell", "38;5;216"),
+        ("ocaml", "38;5;222"),
+        ("clojure", "38;5;150"),
+        ("r", "38;5;110"),
+        ("julia", "38;5;216"),
+        ("perl", "38;5;109"),
+        ("crystal", "38;5;255"),
+        ("nim", "38;5;222"),
+        ("solidity", "38;5;255"),
+        ("terraform", "38;5;216"),
+        ("nix", "38;5;109"),
+        ("elm", "38;5;110"),
+        ("gleam", "38;5;216"),
+        ("odin", "38;5;110"),
+        ("prisma", "38;5;255"),
     ],
 };
 
@@ -404,6 +645,38 @@ static THEME_TOKYO_NIGHT: ThemeColors = ThemeColors {
         ("ruby", "38;5;210"),
         ("php", "38;5;183"),
         ("java", "38;5;210"),
+        ("typescript", "38;5;111"),
+        ("javascript", "38;5;222"),
+        ("vue", "38;5;114"),
+        ("svelte", "38;5;210"),
+        ("astro", "38;5;176"),
+        ("c", "38;5;111"),
+        ("cpp", "38;5;111"),
+        ("csharp", "38;5;216"),
+        ("fsharp", "38;5;116"),
+        ("swift", "38;5;216"),
+        ("kotlin", "38;5;216"),
+        ("scala", "38;5;210"),
+        ("dart", "38;5;111"),
+        ("zig", "38;5;222"),
+        ("lua", "38;5;111"),
+        ("elixir", "38;5;216"),
+        ("erlang", "38;5;210"),
+        ("haskell", "38;5;216"),
+        ("ocaml", "38;5;222"),
+        ("clojure", "38;5;114"),
+        ("r", "38;5;111"),
+        ("julia", "38;5;216"),
+        ("perl", "38;5;116"),
+        ("crystal", "38;5;255"),
+        ("nim", "38;5;222"),
+        ("solidity", "38;5;255"),
+        ("terraform", "38;5;176"),
+        ("nix", "38;5;116"),
+        ("elm", "38;5;111"),
+        ("gleam", "38;5;216"),
+        ("odin", "38;5;111"),
+        ("prisma", "38;5;255"),
     ],
 };
 
@@ -428,6 +701,38 @@ static THEME_GRUVBOX: ThemeColors = ThemeColors {
         ("ruby", "38;5;167"),
         ("php", "38;5;175"),
         ("java", "38;5;167"),
+        ("typescript", "38;5;109"),
+        ("javascript", "38;5;214"),
+        ("vue", "38;5;142"),
+        ("svelte", "38;5;167"),
+        ("astro", "38;5;175"),
+        ("c", "38;5;109"),
+        ("cpp", "38;5;109"),
+        ("csharp", "38;5;175"),
+        ("fsharp", "38;5;108"),
+        ("swift", "38;5;214"),
+        ("kotlin", "38;5;175"),
+        ("scala", "38;5;167"),
+        ("dart", "38;5;109"),
+        ("zig", "38;5;214"),
+        ("lua", "38;5;109"),
+        ("elixir", "38;5;175"),
+        ("erlang", "38;5;167"),
+        ("haskell", "38;5;214"),
+        ("ocaml", "38;5;214"),
+        ("clojure", "38;5;142"),
+        ("r", "38;5;109"),
+        ("julia", "38;5;175"),
+        ("perl", "38;5;108"),
+        ("crystal", "38;5;255"),
+        ("nim", "38;5;214"),
+        ("solidity", "38;5;255"),
+        ("terraform", "38;5;175"),
+        ("nix", "38;5;108"),
+        ("elm", "38;5;109"),
+        ("gleam", "38;5;214"),
+        ("odin", "38;5;109"),
+        ("prisma", "38;5;255"),
     ],
 };
 
@@ -472,6 +777,9 @@ mod tests {
         for (name, icon) in icons.languages {
             assert!(icon.is_ascii(), "{name} icon not ASCII: {icon:?}");
         }
+        for (name, icon) in icons.operating_systems {
+            assert!(icon.is_ascii(), "{name} icon not ASCII: {icon:?}");
+        }
     }
 
     #[test]
@@ -482,5 +790,34 @@ mod tests {
         );
         assert_eq!(IconProfile::Minimal.tokens().language("go"), Some("go:"));
         assert_eq!(IconProfile::NerdFont.tokens().language("unknown"), None);
+        // Language glyphs must be distinct so the directory prefix identifies
+        // the project instead of repeating the generic folder.
+        assert_ne!(
+            IconProfile::NerdFont.tokens().language("node"),
+            Some("\u{f17a}"),
+            "node must not reuse the Windows glyph"
+        );
+    }
+
+    #[test]
+    fn profiles_expose_operating_system_icons() {
+        for profile in IconProfile::ALL {
+            let icons = profile.tokens();
+            for key in ["macos", "windows", "linux"] {
+                assert!(
+                    icons.operating_system(key).is_some(),
+                    "{} is missing a {key} glyph",
+                    profile.as_str()
+                );
+            }
+        }
+        assert_eq!(
+            IconProfile::NerdFont.tokens().operating_system("macos"),
+            Some("\u{f179}")
+        );
+        assert_eq!(
+            IconProfile::NerdFont.tokens().operating_system("windows"),
+            Some("\u{f17a}")
+        );
     }
 }

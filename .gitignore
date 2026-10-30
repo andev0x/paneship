@@ -36,3 +36,5 @@ install/**/*.pkg
 # Auto gitmit
 .commit_suggest_history.json
 
+# ohgo runtime state
+.ohgo/

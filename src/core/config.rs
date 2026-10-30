@@ -1,4 +1,4 @@
-use crate::core::icons::{IconProfile, ThemeProfile};
+use crate::core::icons::{current_os_key, IconProfile, ThemeProfile};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -21,6 +21,8 @@ pub struct Config {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DirectoryConfig {
+    /// Prefix glyph before the path. Empty resolves to the detected project
+    /// language icon, or the host operating system icon outside projects.
     pub icon: String,
     pub truncation_length: usize,
     pub truncate_to_repo: bool,
@@ -219,6 +221,37 @@ impl Config {
         non_empty(&self.directory.icon).unwrap_or_else(|| self.icon_profile().tokens().directory)
     }
 
+    /// Resolved icon for the host operating system, if the profile defines one.
+    ///
+    /// Used as the directory prefix outside projects so a plain directory (for
+    /// example `~/.`) still shows a meaningful platform glyph instead of a
+    /// language icon it does not own.
+    pub fn os_icon(&self) -> &str {
+        let tokens = self.icon_profile().tokens();
+        tokens
+            .operating_system(current_os_key())
+            .unwrap_or(tokens.directory)
+    }
+
+    /// Directory prefix for a path whose project language may be known.
+    ///
+    /// An explicit `[directory].icon` always wins. Otherwise the detected
+    /// language supplies the glyph, and directories without a language fall
+    /// back to the host operating system's icon.
+    pub fn directory_icon_for(&self, language: Option<&str>) -> &str {
+        if let Some(explicit) = non_empty(&self.directory.icon) {
+            return explicit;
+        }
+
+        let tokens = self.icon_profile().tokens();
+        match language {
+            Some(name) => tokens
+                .language(name)
+                .unwrap_or_else(|| self.directory_icon()),
+            None => self.os_icon(),
+        }
+    }
+
     /// Resolved Git branch icon.
     pub fn git_branch_icon(&self) -> &str {
         non_empty(&self.git.branch_icon).unwrap_or_else(|| self.icon_profile().tokens().git_branch)
@@ -415,6 +448,41 @@ mod tests {
         config.icons.profile = "minimal".to_string();
         config.directory.icon = "CUSTOM".to_string();
         assert_eq!(config.directory_icon(), "CUSTOM");
+    }
+
+    #[test]
+    fn directory_icon_tracks_language_then_os() {
+        let config = Config::default();
+        assert_eq!(
+            config.directory_icon_for(Some("rust")),
+            IconProfile::NerdFont.tokens().language("rust").unwrap()
+        );
+        assert_eq!(
+            config.directory_icon_for(None),
+            config.os_icon(),
+            "non-project directories should use the host OS glyph"
+        );
+        assert_ne!(
+            config.directory_icon_for(None),
+            config.directory_icon_for(Some("rust")),
+            "the OS fallback must not look like a project language"
+        );
+
+        let mut explicit = Config::default();
+        explicit.directory.icon = "CUSTOM".to_string();
+        assert_eq!(explicit.directory_icon_for(Some("rust")), "CUSTOM");
+        assert_eq!(explicit.directory_icon_for(None), "CUSTOM");
+    }
+
+    #[test]
+    fn os_icon_is_platform_specific() {
+        let config = Config::default();
+        let expected = IconProfile::NerdFont
+            .tokens()
+            .operating_system(current_os_key())
+            .unwrap_or(IconProfile::NerdFont.tokens().directory);
+        assert_eq!(config.os_icon(), expected);
+        assert!(!config.os_icon().is_empty());
     }
 
     #[test]
