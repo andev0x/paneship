@@ -25,9 +25,22 @@ toml_edit = "0.22"
 tempfile = "3"
 tokio = { version = "1.53.3", features = ["rt", "rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
 async-trait = "0.1.92"
-notify = "8.2.0"
+# `notify`'s macOS backends are selected explicitly so that release binaries for
+# `*-apple-darwin` can be cross-compiled on Linux without an Apple SDK. FSEvents
+# links the CoreServices framework, which is unavailable to `cargo-zigbuild`;
+# the kqueue backend is pure Rust and links only libc. Native macOS builds keep
+# FSEvents through the default feature.
+notify = { version = "8.2.0", default-features = false }
 lru = "0.18.5"
 ratatui = "0.30"
+
+[features]
+default = ["macos-fsevent"]
+# Preferred macOS backend for native builds (efficient recursive watching).
+macos-fsevent = ["notify/macos_fsevent"]
+# Portable macOS backend used by cross-compiled release binaries; no Apple SDK
+# or CoreServices framework is required.
+macos-kqueue = ["notify/macos_kqueue"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

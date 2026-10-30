@@ -51,9 +51,9 @@ Verification: **100 unit tests + 1 integration test pass**, `cargo clippy
 |---|-------------|--------|----------|
 | P.1 | One-line cross-platform installer | ✅ | `install.sh` |
 | P.2 | Release profile tuning (LTO/codegen-units/strip) | ✅ | `Cargo.toml` |
-| P.3 | CI quality gate across OS matrix | ✅ | `.github/workflows/ci.yml` |
-| P.4 | Fixed multi-platform release assets | ✅ | `.github/workflows/release.yml` |
-| P.5 | Fixed Windows artifact path in build workflow | ✅ | `.github/workflows/build.yml` |
+| P.3 | Zero-cost CI quality gate (Ubuntu only) | ✅ | `.github/workflows/ci.yml` |
+| P.4 | Cross-compiled multi-platform release assets | ✅ | `.github/workflows/release.yml` |
+| P.5 | Consolidated build/smoke checks into CI and release | ✅ | `build.yml` removed |
 | P.6 | `--version` / `paneship version` CLI | ✅ | `src/main.rs` |
 | R.1 | Benchmark no longer times tmux subprocess | ✅ | `src/benchmark.rs` |
 | R.2 | Width resolution prefers cheap ioctl before tmux | ✅ | `src/core/prompt.rs` |
@@ -107,9 +107,17 @@ detector must not abort the whole daemon. This is documented inline.
 
 | Workflow | Change |
 |----------|--------|
-| `ci.yml` | Now an OS matrix (ubuntu/macos/windows) running `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`, `cargo build --release --locked`. The previous clippy step ran without `--all-targets`, so test/bench targets were never linted. |
-| `build.yml` | Fixed the artifact path (`target/release/paneship*`) — on Windows the previous `target/release/paneship` never matched `paneship.exe` and the upload would fail. Added a `--version` smoke test and `if-no-files-found: error`. |
-| `release.yml` | **Fixed asset collisions.** Releases now publish `paneship-<target>.tar.gz`/`.zip` for `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`; the installer consumes exactly these names. |
+| `ci.yml` | Single `ubuntu-latest` job running `cargo fmt --all -- --check`, `cargo check --all-targets --locked`, `cargo clippy --all-targets --locked -- -D warnings` and `cargo test --all-targets --locked`. Uses `Swatinem/rust-cache`, cancels superseded runs, and requests read-only permissions. No macOS or Windows runners. |
+| `release.yml` | Triggered by `v*` tags or manual dispatch only. A `verify` job runs the same lint/test gate, then a six-target matrix cross-compiles everything on `ubuntu-latest`: `x86_64-unknown-linux-gnu` (native), `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-gnu` (cross), `x86_64-apple-darwin` and `aarch64-apple-darwin` (cargo-zigbuild), and `x86_64-pc-windows-gnu` (cross). Each archive ships the binary, `README.md` and `LICENSE`; publishing uploads `SHA256SUMS.txt` plus `paneship-<target>.tar.gz`/`.zip`, the exact names `install.sh` consumes. |
+| `build.yml` | Removed. Its binary-format check, `--version` smoke test and `if-no-files-found: error` guard now live in the release matrix, so there is no second, drifting build definition. |
+
+macOS release binaries are built with `--no-default-features --features
+macos-kqueue`: `notify`'s default FSEvents backend links CoreServices, which is
+unavailable to Zig's bundled Darwin sysroot. Native macOS builds keep FSEvents
+through the default feature, and the `macos-kqueue` path is compiled for both
+Apple architectures on every release run. All
+jobs use GitHub-hosted Ubuntu runners, which are free for public repositories,
+so the pipeline requests no metered macOS/Windows compute.
 
 ---
 
