@@ -1,9 +1,13 @@
 name: Release
 
-# Continuous delivery only: tags matching `v*` or a manual dispatch. Every
-# target is built on GitHub-hosted Ubuntu runners (free for public repos).
-# macOS and Windows binaries are cross-compiled, so no metered runners are
-# ever allocated.
+# Continuous delivery only: tags matching `v*` or a manual dispatch.
+#
+# Cost model: every job runs on `ubuntu-latest` standard runners, which are
+# free and unmetered for this public repository. macOS and Windows binaries are
+# cross-compiled on Ubuntu, so no metered macOS/Windows or larger runners are
+# ever allocated. Publishing to crates.io is folded into the existing release
+# job so the feature adds no extra runner. Only tag pushes and manual
+# dispatches trigger the workflow; pull requests never build release targets.
 on:
   push:
     tags:
@@ -11,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish (leave empty to build artifacts only)"
+        description: "Tag to publish, e.g. v1.2.1 (leave empty to build artifacts only)"
         required: false
         type: string
 
@@ -191,28 +195,25 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish-crate:
-    name: Publish to crates.io
+  publish:
+    name: Publish GitHub Release + crates.io
     needs: build
-    # Same gating as the GitHub release: tag pushes always publish, manual
-    # dispatches only when a tag is supplied.
+    # Tag pushes always publish. Manual dispatches publish only when a tag is
+    # supplied; otherwise the run stops after producing downloadable artifacts.
+    # Publishing to crates.io happens here instead of in a separate job so no
+    # extra runner is allocated for it.
     if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout tagged source
+        uses: actions/checkout@v7
         with:
           # On a manual dispatch, publish the tagged source rather than the
           # branch the workflow was started from.
           ref: ${{ inputs.tag || github.ref }}
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-publish
 
       # crates.io versions are immutable, so never ship a crate whose version
       # does not match the released tag.
@@ -250,23 +251,6 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to crates.io
-        if: steps.published.outputs.exists == 'false'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
-
-  publish:
-    name: Publish GitHub Release
-    needs: build
-    # Tag pushes always publish. Manual dispatches publish only when a tag is
-    # supplied; otherwise the run stops after producing downloadable artifacts.
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -276,6 +260,16 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+
+      # The `verify` job already ran fmt/clippy/tests on this exact commit, so
+      # `--no-verify` only skips recompiling the packaged crate in a throwaway
+      # directory. `cargo package` still validates the manifest and the file
+      # list before anything is uploaded.
+      - name: Publish to crates.io
+        if: steps.published.outputs.exists == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked --no-verify
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v3
