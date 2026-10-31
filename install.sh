@@ -9,7 +9,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/andev0x/paneship/main/install.sh | bash
 #   ./install.sh --from-source
-#   ./install.sh --version v1.2.0 --dir "$HOME/.local/bin"
+#   ./install.sh --version v1.2.1 --dir "$HOME/.local/bin"
 #
 # Environment overrides:
 #   PANESHIP_INSTALL_DIR   Destination directory for the binary.
@@ -44,7 +44,7 @@ USAGE:
     install.sh [OPTIONS]
 
 OPTIONS:
-    --version <tag>     Install a specific release tag (e.g. v1.2.0).
+    --version <tag>     Install a specific release tag (e.g. v1.2.1).
     --dir <path>        Install the binary into <path>.
     --from-source       Skip the prebuilt binary and build with Cargo.
     --no-modify-path    Do not print PATH setup instructions.
