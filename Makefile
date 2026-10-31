@@ -9,6 +9,7 @@
 #   PREFIX=...       install prefix               (default: ~/.local)
 #   INSTALL_DIR=...  binary destination           (default: $(PREFIX)/bin)
 #   BENCH_ARGS=...   args for `make bench`        (default: --iterations 300 --panes 4)
+#   DRY_RUN=1        only verify `make publish`   (default: unset)
 
 CARGO       ?= cargo
 BIN         ?= paneship
@@ -48,7 +49,7 @@ DIST_DIR      := $(TARGET_DIR)/dist
 
 .PHONY: help all build release run check ci fmt fmt-check clippy test \
         bench bench-starship top config daemon ping invalidate install \
-        install-release dist doc audit clean version
+        install-release dist doc audit clean version publish publish-crate
 
 # ---------------------------------------------------------------------------
 # Meta
@@ -143,6 +144,19 @@ dist: release ## Package the release binary as $(DIST_NAME).tar.gz
 
 doc: ## Build and open the API documentation
 	$(CARGO) doc --no-deps --open
+
+# ---------------------------------------------------------------------------
+# Publish
+# ---------------------------------------------------------------------------
+
+publish: check ## Publish the crate to crates.io (DRY_RUN=1 to only verify)
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "error: working tree is dirty; commit or stash changes first" >&2; \
+		exit 1; \
+	fi
+	$(CARGO) publish --locked $(if $(DRY_RUN),--dry-run)
+
+publish-crate: publish ## Alias for publish
 
 clean: ## Remove build artifacts
 	$(CARGO) clean
