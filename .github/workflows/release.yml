@@ -191,6 +191,71 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  publish-crate:
+    name: Publish to crates.io
+    needs: build
+    # Same gating as the GitHub release: tag pushes always publish, manual
+    # dispatches only when a tag is supplied.
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # On a manual dispatch, publish the tagged source rather than the
+          # branch the workflow was started from.
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-publish
+
+      # crates.io versions are immutable, so never ship a crate whose version
+      # does not match the released tag.
+      - name: Verify tag matches crate version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          crate_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          tag_version="${TAG#v}"
+          if [ "${crate_version}" != "${tag_version}" ]; then
+            echo "::error::Tag ${TAG} does not match Cargo.toml version ${crate_version}"
+            exit 1
+          fi
+
+      # Skip gracefully when the version is already on crates.io (e.g. a rerun
+      # after a partial release), instead of failing the whole workflow.
+      - name: Check whether the version is already published
+        id: published
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          crate_version="${TAG#v}"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -A "paneship-release-ci (https://github.com/andev0x/paneship)" \
+            "https://crates.io/api/v1/crates/paneship/${crate_version}")"
+          if [ "${status}" = "200" ]; then
+            echo "paneship ${crate_version} is already on crates.io; skipping"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif [ "${status}" = "404" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unexpected crates.io response (HTTP ${status})"
+            exit 1
+          fi
+
+      - name: Publish to crates.io
+        if: steps.published.outputs.exists == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+
   publish:
     name: Publish GitHub Release
     needs: build
