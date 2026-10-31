@@ -1,0 +1,135 @@
+name: Bug report
+description: Report a reproducible defect in Paneship
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please search
+        [existing issues](https://github.com/andev0x/paneship/issues) first and
+        provide as much detail as you can. For security problems, use the
+        [Security Policy](https://github.com/andev0x/paneship/blob/main/SECURITY.md)
+        instead of a public issue.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am running the latest release or `main`.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: The prompt shows ... when ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact commands and directory context.
+      placeholder: |
+        1. Run `paneship init zsh --onboarding`
+        2. `cd` into a repository with ...
+        3. Run ...
+        4. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include screenshots or terminal captures when useful.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x86_64)
+        - Linux (aarch64)
+        - Windows (x86_64)
+        - WSL2
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: shell
+    attributes:
+      label: Shell and terminal
+      description: For example, Zsh 5.9 in iTerm2, Fish 3.7 in tmux, PowerShell 7 in Windows Terminal.
+      placeholder: Zsh 5.9 / iTerm2 / tmux 3.4
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Paneship version
+      description: Output of `paneship --version`, plus `rustc --version` if you built from source.
+      placeholder: paneship 1.2.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation method
+      options:
+        - One-line installer
+        - "`cargo install paneship`"
+        - Built from source
+        - Package manager
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: Paste the relevant parts of `~/.config/paneship/config.toml`. Redact secrets.
+      render: toml
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Paste the output of the commands below when relevant. Redact credentials,
+        Kubernetes context names, and other sensitive values.
+      value: |
+        `paneship daemon ping`
+        `paneship top --once`
+        tail -n 50 ~/.cache/paneship/daemon.log
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else that may help reproduce or diagnose the issue.

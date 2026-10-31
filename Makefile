@@ -47,7 +47,7 @@ DIST_DIR      := $(TARGET_DIR)/dist
 
 .DEFAULT_GOAL := help
 
-.PHONY: help all build release run check ci fmt fmt-check clippy test \
+.PHONY: help all build release run check ci fmt fmt-check clippy test doc-check \
         bench bench-starship top config daemon ping invalidate install \
         install-release dist doc audit clean version publish publish-crate
 
@@ -93,7 +93,7 @@ config: release ## Open the interactive TUI configurator
 # Quality gate
 # ---------------------------------------------------------------------------
 
-check: fmt-check clippy test ## Full gate: formatting, lints, tests
+check: fmt-check clippy test doc-check ## Full gate: formatting, lints, tests, docs
 	@echo "✓ all quality gates passed"
 
 ci: check ## Alias for check
@@ -144,6 +144,9 @@ dist: release ## Package the release binary as $(DIST_NAME).tar.gz
 
 doc: ## Build and open the API documentation
 	$(CARGO) doc --no-deps --open
+
+doc-check: ## Build rustdoc and deny warnings (used by make check)
+	RUSTDOCFLAGS="-D warnings" $(CARGO) doc --no-deps --locked
 
 # ---------------------------------------------------------------------------
 # Publish

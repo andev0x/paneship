@@ -2,15 +2,26 @@
 name = "paneship"
 version = "1.2.1"
 edition = "2021"
+rust-version = "1.88"
 authors = ["andev0x"]
 description = "A blazingly fast, high-performance shell prompt optimized for tmux and large Git repositories"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/andev0x/paneship"
 homepage = "https://github.com/andev0x/paneship"
-documentation = "https://docs.rs/paneship"
+documentation = "https://github.com/andev0x/paneship/tree/main/docs"
 keywords = ["prompt", "shell", "tmux", "git", "performance"]
 categories = ["command-line-utilities"]
+# Keep the crates.io package focused on the binary and user-facing files.
+# Developer documentation, CI configuration, and local screenshots are not
+# needed to build from a published crate.
+exclude = [
+    "/.github/",
+    "/docs/",
+    "/img-bugs/",
+    "/target/",
+    "/Makefile",
+]
 
 [dependencies]
 gix = "0.70"
