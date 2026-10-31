@@ -170,7 +170,7 @@ jobs:
           staging="paneship-${TARGET}"
           mkdir -p "$staging"
           cp "target/${TARGET}/release/${BIN}" "$staging/${BIN}"
-          cp README.md LICENSE "$staging/"
+          cp README.md LICENSE CHANGELOG.md "$staging/"
           tar -czf "${staging}.tar.gz" "$staging"
 
       - name: Package (zip)
@@ -184,7 +184,7 @@ jobs:
           staging="paneship-${TARGET}"
           mkdir -p "$staging"
           cp "target/${TARGET}/release/${BIN}" "$staging/${BIN}"
-          cp README.md LICENSE "$staging/"
+          cp README.md LICENSE CHANGELOG.md "$staging/"
           zip -qr "${staging}.zip" "$staging"
 
       - name: Upload artifact

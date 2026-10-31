@@ -1,0 +1,53 @@
+name: Question
+description: Ask about installation, configuration, or everyday usage
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [documentation](https://github.com/andev0x/paneship/tree/main/docs)
+        and [existing issues](https://github.com/andev0x/paneship/issues) first.
+        For a reproducible defect, use the bug report template. For security
+        problems, use the Security Policy instead of a public issue.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I have read the relevant documentation.
+          required: true
+        - label: I have searched existing issues.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and where are you stuck?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Include your shell, terminal, OS, Paneship version, and relevant configuration with secrets redacted.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Commands, settings, or documentation you already checked.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, or links that may help.

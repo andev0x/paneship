@@ -4,60 +4,98 @@
 
 # Paneship
 
-**A blazingly fast, high-performance shell prompt optimized for tmux and large Git repositories.**
+**A fast, high-performance shell prompt optimized for tmux and large Git repositories.**
 
 [![Crates.io](https://img.shields.io/crates/v/paneship?style=flat-square&color=orange)](https://crates.io/crates/paneship)
-[![Docs.rs](https://img.shields.io/docsrs/paneship?style=flat-square&color=blue)](https://docs.rs/paneship)
-[![CI Status](https://img.shields.io/github/actions/workflow/status/andev0x/paneship/ci.yml?branch=main&style=flat-square)](https://github.com/andev0x/paneship/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/andev0x/paneship/ci.yml?branch=main&style=flat-square)](https://github.com/andev0x/paneship/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue?style=flat-square)](./Cargo.toml)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#requirements-and-platform-support)
 [![GitHub Stars](https://img.shields.io/github/stars/andev0x/paneship?style=flat-square&color=gold)](https://github.com/andev0x/paneship/stargazers)
 
----
-
-[Key Features](#-features) • [Demo](#-demo) • [Installation](#-installation) • [Shell Setup](#-shell-setup) • [Configuration](#%EF%B8%8F-configuration) • [Architecture](#-architecture) • [Benchmarks](#-benchmarks) • [CLI Commands](#-cli-commands) • [Troubleshooting](#-troubleshooting) • [Contributing](#-contributing)
+[Features](#features) • [Installation](#installation) • [Shell setup](#shell-setup) • [Configuration](#configuration) • [Architecture](#architecture) • [Benchmarks](#benchmarks) • [CLI](#cli) • [Documentation](#documentation)
 
 </div>
 
 ---
 
-##  About
+## About
 
-**Paneship** is a modern, ultra-fast, and customizable command-line prompt utility written in Rust. It is engineered from the ground up for developers who work in terminal multiplexers (like tmux), manage large Git repositories, and demand a snappy shell interface. 
+**Paneship** is a fast, customizable command-line prompt written in Rust. It is
+designed for developers who work in terminal multiplexers such as tmux, manage
+large Git repositories, and expect the shell to stay responsive.
 
-By leveraging a persistent background daemon, asynchronous Git checks, and smart cache invalidation, Paneship achieves a rendering speed of **~2.5ms**, keeping your shell highly responsive even in massive monorepos.
-
----
-
-##  Features
-
--  **Sub-millisecond Performance** – Renders in **~2.5ms** on average by using a client-daemon architecture.
--  **Non-Blocking Async Detection** – Git status checks and language/runtime detection run in background workers. Metadata never blocks the render path; a `[lang...]` placeholder fills in until the worker reports back.
--  **Modular Detector Registry** – Every language lives behind a single `Detector` trait in its own file, reading version pins directly from `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, … with no external subprocess.
--  **Interactive Configurator** – `paneship config` opens a TUI with a live prompt preview, atomic saves, and instant daemon hot-reload.
--  **Icon Sets & Themes** – Built-in `nerdfont` (default, strictly emoji-free), `emoji` (explicit opt-in) and `minimal` (ASCII) profiles plus colour themes, so prompt formatting adapts to any terminal or font.
--  **Multi-Shell Compatibility** – Native integration scripts for Zsh, Bash, Fish, PowerShell, Nushell, Elvish, Xonsh, Tcsh, Ion, and Cmd.
--  **Tmux-Aware & Responsive** – Automatically detects tmux pane width changes and truncates long paths or metadata gracefully.
--  **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
--  **Configurable & Aesthetic** – Easy-to-use TOML-based configurations. Fully supports custom icons, emojis, and Nerd Fonts.
--  **Rust/Node/Bun/Go/Python/Deno/Ruby/PHP/Java Version Detectors** – Automatically fetches and displays active development environment versions in your metadata area.
--  **Native Right Prompt (RPROMPT)** – Zsh (`RPROMPT`/`RPS1`), Fish (`fish_right_prompt`) and Nushell (`PROMPT_COMMAND_RIGHT`) bind the width-aware right region natively; low-priority elements (timing, clock) collapse first so narrow tmux panes never wrap.
--  **Infrastructure Detectors** – Kubernetes context/namespace, container markers, AWS/GCP/Azure profiles, and Nix/Direnv state, resolved in background workers with a hard 10 ms per-detector budget.
--  **Live Telemetry** – `paneship top` streams daemon worker utilization, cache hit ratios and average lookup latency, LRU evictions, and filesystem-watcher throughput.
--  **Command Execution Timing** – Keeps track of long-running command durations and presents them in a human-readable format (e.g., `11ms`, `1m20s`).
+A persistent background daemon, asynchronous Git checks, and smart cache
+invalidation keep the render path at roughly **2.5 ms**, even in large
+monorepos.
 
 ---
 
-##  Demo
+## Features
+
+- **Bounded render path** – A client-daemon architecture keeps expensive work
+  off the foreground prompt process.
+- **Non-blocking async detection** – Git status, language versions, and
+  infrastructure signals are resolved by background workers. Metadata never
+  blocks the render path; explicit placeholders fill in until a worker reports
+  back.
+- **Modular detector registry** – Every language implements a single `Detector`
+  trait in its own file, reading version pins directly from `Cargo.toml`,
+  `package.json`, `go.mod`, `pyproject.toml`, and similar manifests. No external
+  version subprocess is spawned.
+- **Interactive configurator** – `paneship config` opens a TUI with a live
+  prompt preview, atomic saves, and daemon hot reload.
+- **Icon sets and themes** – Built-in `nerdfont` (default, emoji-free), `emoji`
+  (explicit opt-in), and `minimal` (ASCII) profiles, plus colour themes.
+- **Multi-shell support** – Integration scripts for Zsh, Bash, Fish, PowerShell,
+  Nushell, Elvish, Xonsh, Tcsh, Ion, and Cmd.
+- **tmux-aware layout** – Detects pane width changes and truncates long paths or
+  metadata instead of wrapping.
+- **Git integration** – Branch status plus staged, unstaged, and untracked
+  counts, computed efficiently with `gix`.
+- **Runtime and package detection** – Rust, Node, Bun, Deno, Go, Python, Ruby,
+  PHP, and Java versions, plus Cargo package versions.
+- **Native right prompt (RPROMPT)** – Zsh (`RPROMPT`/`RPS1`), Fish
+  (`fish_right_prompt`), and Nushell (`PROMPT_COMMAND_RIGHT`) bind the width-aware
+  right region natively. Low-priority elements collapse first in narrow panes.
+- **Infrastructure detectors** – Kubernetes context/namespace, container
+  markers, AWS/GCP/Azure profiles, and Nix/Direnv state, each capped at a 10 ms
+  background budget.
+- **Live telemetry** – `paneship top` streams worker utilization, cache hit
+  ratios, lookup latency, LRU evictions, and watcher throughput.
+- **Command timing** – Displays long-running command durations such as `11ms`
+  or `1m20s`.
+
+---
+
+## Demo
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/paneship.gif" width="80%" alt="Paneship Demo Video" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
+  <img src="https://raw.githubusercontent.com/andev0x/description-image-archive/refs/heads/main/paneship/paneship.gif" width="80%" alt="Paneship demo" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
 </div>
 
 ---
 
-##  Installation
+## Requirements and platform support
 
-### One-line installer (Recommended)
+- **Rust:** 1.88 or newer (MSRV) for source builds.
+- **Shell:** any supported shell listed in [Shell setup](#shell-setup).
+- **Terminal:** a Nerd Font is recommended for the default profile; use
+  `minimal` or `emoji` if needed.
+- **tmux:** optional, but the layout and width handling are tuned for it.
+
+| Platform | Architecture | Status |
+| -------- | ------------ | ------ |
+| Linux | x86_64, aarch64 | Supported |
+| macOS | Intel, Apple Silicon | Supported |
+| Windows | x86_64 | Supported (compile-verified in CI; runtime reports welcome) |
+| WSL2 | x86_64, aarch64 | Supported through the Unix socket transport |
+
+---
+
+## Installation
+
+### One-line installer (recommended)
 
 Downloads a prebuilt binary for your platform and falls back to building from
 source when necessary:
@@ -75,20 +113,16 @@ install:
 
 ### Using Cargo
 
-Installs the package directly from [crates.io](https://crates.io/crates/paneship):
-
 ```bash
 cargo install paneship
 ```
 
-### From Source
-
-Ensure you have Rust and Cargo installed (Rust 1.70+ is required):
+### From source
 
 ```bash
 git clone https://github.com/andev0x/paneship.git
 cd paneship
-cargo install --path .
+cargo install --locked --path .
 ```
 
 Verify the installation:
@@ -99,30 +133,29 @@ paneship --version
 
 ---
 
-##  Shell Setup
+## Shell setup
 
 Paneship can configure itself automatically or be integrated manually.
 
-### 1. Automatic Onboarding (Recommended)
+### Automatic onboarding (recommended)
 
-Run the `init` command with the `--onboarding` flag. This will automatically detect your shell configuration file and append the necessary initialization block safely. It also handles starting the background daemon for you.
+`--onboarding` detects the shell configuration file, appends or updates a
+marker-delimited block, and keeps the block idempotent. It also starts the
+background daemon.
 
-```bash
-paneship init <shell> --onboarding
-```
-
-*Example for Zsh:*
 ```bash
 paneship init zsh --onboarding
 ```
 
-`paneship init <shell> to onboarding` is an accepted alias for the same
-behaviour. Onboarding is supported for Zsh, Bash, Fish, PowerShell, Nushell,
-Elvish, Xonsh, Tcsh and Ion.
+`paneship init <shell> to onboarding` is an accepted alias. Onboarding is
+supported for Zsh, Bash, Fish, PowerShell, Nushell, Elvish, Xonsh, Tcsh, and
+Ion.
 
-### 2. Manual Configuration
+### Manual configuration
 
-Add the corresponding snippet to your shell configuration file. Note that manual configuration requires you to ensure the `paneship daemon` is running for optimal performance.
+Add the corresponding snippet to your shell configuration file. Manual setup
+still needs the daemon for optimal performance; the generated hooks start it
+when `paneship daemon ping` fails.
 
 <details>
 <summary><b>Zsh (<code>~/.zshrc</code>)</b></summary>
@@ -152,7 +185,7 @@ paneship init fish | source
 <summary><b>PowerShell (<code>$PROFILE</code>)</b></summary>
 
 ```powershell
-Invoke-Expression (&paneship init powershell)
+Invoke-Expression (& paneship init powershell)
 ```
 </details>
 
@@ -167,9 +200,10 @@ source ~/.cache/paneship/init.nu
 </details>
 
 <details>
-<summary><b>Other Shells</b></summary>
+<summary><b>Other shells</b></summary>
 
-For other supported shells (Elvish, Xonsh, Tcsh, Ion, Cmd), evaluate or source the output of:
+For Elvish, Xonsh, Tcsh, Ion, and Cmd, evaluate or source the output of:
+
 ```bash
 paneship init <shell>
 ```
@@ -177,13 +211,14 @@ paneship init <shell>
 
 ---
 
-##  Configuration
+## Configuration
 
-Paneship configuration is defined in `~/.config/paneship/config.toml`. Sensible defaults are applied if this file is not present. Run **`paneship config`** for an interactive TUI with a live prompt preview.
+Configuration lives at `~/.config/paneship/config.toml`. Missing files and
+invalid TOML fall back to built-in defaults. Run `paneship config` for an
+interactive editor with a live preview.
 
-### Default Config Structure
-
-Prompt glyphs and colours resolve from an **icon profile** and **theme**, so you rarely set icons by hand:
+Prompt glyphs and colours resolve from an **icon profile** and **theme**, so you
+rarely set individual icons:
 
 ```toml
 [icons]
@@ -197,265 +232,240 @@ rprompt = true         # render the right-aligned telemetry region
 rprompt_min_width = 20 # below this width the right region is dropped
 
 [environment]
-enabled = true         # master switch for environment identification
-kubernetes = true      # ~/.kube/config context + namespace
-docker = true          # /.dockerenv, /proc/1/cgroup, $container
-cloud = true           # active AWS / GCP / Azure profile
-nix_direnv = true      # IN_NIX_SHELL and .envrc state
+enabled = true
+kubernetes = true
+docker = true
+cloud = true
+nix_direnv = true
 health = false         # opt-in CPU load pressure / low battery
 
 [directory]
 truncation_length = 3
 truncate_to_repo = true
-
-[git]
-branch_icon = ""       # empty = active icon profile
-staged_icon = "+"
-unstaged_icon = "!"
-untracked_icon = "?"
-
-[status]
-success_icon = ""      # empty = active icon profile
-failure_icon = ""
-
-[metadata]
-time_color = ""        # empty = active theme
-paneship_color = ""    # empty = active theme
 ```
 
-> **Glyph policy**: the default `nerdfont` profile contains no raw emoji — only Nerd Font glyphs and standard geometric symbols such as the `❯` prompt cursor. The `emoji` profile is an explicit, manual opt-in; it is never selected by default.
+> **Glyph policy:** the default `nerdfont` profile contains no raw emoji, only
+> Nerd Font glyphs and standard geometric symbols such as the `❯` prompt cursor.
+> The `emoji` profile is an explicit opt-in and is never selected by default.
 >
-> **Layout contract**: the left prompt is reserved for context — the `❯` cursor, the shortened working directory, Git state and the project version. The path is pure text: it is never prefixed by a folder, project-language or OS glyph. Host OS glyphs, infrastructure/environment badges, runtime versions, command duration and the clock are right-aligned telemetry. OS identification never appears before the path, so `cd`/`z` navigation cannot leak a platform logo into the left prompt.
+> **Layout contract:** the left prompt is reserved for context: the cursor, the
+> shortened working directory, Git state, and the project version. The path is
+> pure text and is never prefixed by a folder, language, or OS glyph. Host OS
+> glyphs, infrastructure badges, runtime versions, command duration, and the
+> clock are right-aligned telemetry.
 
-### Configuration Reference
-
-#### `[icons]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `profile` | String | `"nerdfont"` | Glyph profile: `nerdfont` (default, emoji-free), `emoji` (explicit opt-in), or `minimal` (pure ASCII). |
-
-#### `[theme]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `name` | String | `"default"` | Colour theme: `default`, `dracula`, `nord`, `tokyo-night`, or `gruvbox`. |
-
-#### `[prompt]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `rprompt` | Boolean | `true` | Render the right-aligned metadata region at all. |
-| `rprompt_min_width` | Integer | `20` | Minimum terminal width (columns) required to render the RPROMPT. Below this the right region is dropped entirely rather than risking a wrap. |
-
-#### `[environment]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `enabled` | Boolean | `true` | Master switch for the environment segment. |
-| `kubernetes` | Boolean | `true` | Kubernetes context / namespace detection (`~/.kube/config` or `$KUBECONFIG`). |
-| `docker` | Boolean | `true` | Container detection (`.dockerenv`, `/proc/1/cgroup`, `$container`). |
-| `cloud` | Boolean | `true` | Active AWS / GCP / Azure profile detection. |
-| `nix_direnv` | Boolean | `true` | Nix shell (`IN_NIX_SHELL`) and direnv (`.envrc`) detection. |
-| `health` | Boolean | `false` | Opt-in system health checks (CPU load pressure / low battery). macOS shells out to `pmset` and runs under a looser 250 ms budget. |
-
-#### `[directory]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `truncation_length` | Integer | `3` | Maximum folder depth to display before truncating. |
-| `truncate_to_repo` | Boolean | `true` | If true, automatically hides paths outside the Git repository root when inside a repo. |
-
-> `[directory].icon` is no longer rendered. The left path is always pure text; older configs containing the key still parse and the key is ignored.
-
-#### `[git]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `branch_icon` | String | `""` | Prefix icon for Git branch. Empty falls back to the icon profile. |
-| `staged_icon` | String | `"+"` | Symbol representing staged changes. |
-| `unstaged_icon` | String | `"!"` | Symbol representing unstaged changes. |
-| `untracked_icon` | String | `"?"` | Symbol representing untracked files. |
-
-#### `[status]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `success_icon` | String | `""` | Prompt cursor character on command success. Empty falls back to the icon profile. |
-| `failure_icon` | String | `""` | Prompt cursor character on command failure. Empty falls back to the icon profile. |
-
-#### `[metadata]`
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `time_color` | String | `""` | ANSI SGR colour code for the current time. Empty falls back to the theme. |
-| `paneship_color` | String | `""` | ANSI SGR colour code for the package version. Empty falls back to the theme. |
-| `languages` | Table | `{}` | Optional per-language `icon`/`color` overrides; empty fields fall back to the icon profile and theme. |
+The complete field reference, colour codes, environment variables, and reload
+behavior are in **[docs/configuration.md](docs/configuration.md)**.
 
 ---
 
-##  Color Coding Reference
+## Architecture
 
-Paneship uses standard ANSI SGR escape sequence parameter codes for styling. You can configure styles using single values or semicolon-separated options:
-
-- `1` (Bold), `2` (Dim/Faint), `4` (Underline)
-- `30`–`37` (Standard foreground colors: Red=31, Green=32, Yellow=33, Blue=34, Magenta=35, Cyan=36, White=37)
-- `1;33` (Bold Yellow)
-- `1;38;5;208` (256-color orange foreground)
-
----
-
-##  Architecture
-
-To prevent shell input lag, Paneship implements a lightweight **Client-Daemon-Worker** system architecture:
+Paneship uses a lightweight **client-daemon-worker** architecture:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client as CLI Client (paneship render)
-    participant Daemon as Daemon (Background Service)
-    participant Cache as Shared Memory Cache
-    participant Worker as Background Worker
+    participant Client as CLI client (paneship render)
+    participant Daemon as Daemon (background)
+    participant Cache as In-memory LRU cache
+    participant Worker as Background worker
 
-    Client->>Daemon: Send Context (CWD, exit code, width)
-    Daemon->>Cache: Query cache for CWD & Git state
-    alt Cache Hit (valid state)
-        Cache-->>Daemon: Return cached prompt layout
-        Daemon-->>Client: Instant render response (~2ms)
-    else Cache Miss (or background refresh needed)
-        Daemon->>Worker: Trigger async check (Git status / language versions)
-        Cache-->>Daemon: Return partially cached data
-        Daemon-->>Client: Renders prompt immediately
-        Worker->>Worker: Run Gitoxide (gix) & language detection
-        Worker->>Cache: Populate / Update cache
+    Client->>Daemon: CWD, exit code, width, duration
+    Daemon->>Cache: Look up Git / language / environment state
+    alt Cache hit
+        Cache-->>Daemon: Fresh or stale snapshot
+        Daemon-->>Client: Rendered prompt (~1-2 ms)
+    else Cache miss
+        Daemon->>Worker: Enqueue refresh
+        Cache-->>Daemon: Pending placeholder or last known value
+        Daemon-->>Client: Render immediately
+        Worker->>Worker: gix, manifest parses, environment probes
+        Worker->>Cache: Store fresh snapshot
     end
 ```
 
-### Smart Invalidation
-The background daemon listens on a platform-native local socket (Unix domain socket on macOS/Linux/WSL2, named pipe on Windows). It watches each active repository's Git metadata — `.git/HEAD`, `.git/index`, `.git/packed-refs` and `.git/refs/` (heads, remotes and tags) — and coalesces bursts of events (for example during `git rebase` or `git checkout`) with a short debounce window before invalidating the affected cache entries.
+### Smart invalidation
 
-Shell hooks also emit an explicit `INVALIDATE_CWD(path)` signal right after any command that starts with `git `, so operations like `git push` or `git fetch` (which update remote-tracking refs) are reflected on the very next prompt without waiting for a filesystem event.
+The daemon watches each active repository's Git metadata: `.git/HEAD`,
+`.git/index`, `.git/packed-refs`, `.git/refs/` (heads, remotes, tags), and the
+metadata files directly under `.git`. Bursts of events from `git rebase` or
+`git checkout` are coalesced with a 50 ms debounce.
 
-### Cache & Fallback Guarantees
-Git state is held in an in-memory LRU store (default capacity: 500 working directories) with a hard 5-second TTL. When an entry expires, the daemon serves the last known value immediately while a background worker refreshes it (`stale = true`). If a repository is known but its state cannot be computed within the render budget (for example on a very large monorepo), Paneship renders an explicit `[git...]` placeholder instead of silently dropping the segment, and logs the failure to `~/.cache/paneship/daemon.log`.
+Shell hooks also send an explicit `invalidate` signal after any command starting
+with `git `, so operations such as `git push` and `git fetch` are reflected on
+the next prompt without waiting for a filesystem event.
 
-> Tune the cache with `PANESHIP_CACHE_CAPACITY`. Git TTL is set with `PANESHIP_GIT_TTL_MS`; the metadata caches are tuned per category with `PANESHIP_LANG_TTL_MS`, `PANESHIP_PACKAGE_TTL_MS` and `PANESHIP_ENV_TTL_MS`, so a slow-changing signal such as a package version can be cached far longer than fast-moving Git state.
+### Cache and fallback guarantees
 
-### Non-Blocking Metadata Detection
-Language/runtime metadata follows the same stale-while-revalidate pattern. A cache miss or TTL expiry returns an explicit `[lang...]` placeholder immediately and dispatches a manifest parse to the worker pool — version extraction never runs on the render path. Parsing is **manifest-first** (via lightweight TOML/JSON readers) and spawns no external subprocesses (`node -v`, `python --version`, …).
+Git state is held in an in-memory LRU store (default: 500 working directories)
+with a 5-second TTL. Expired entries are served immediately while a worker
+refreshes them. If a repository is known but its state cannot be computed within
+the first-render budget, Paneship renders `[git...]` instead of silently
+dropping the segment and logs the failure to
+`~/.cache/paneship/daemon.log`.
 
-Detectors are isolated behind a uniform trait: adding a language means implementing `Detector` in a single file and appending it to the registry in `src/detectors/mod.rs`, leaving the renderer untouched.
+Metadata caches use independent TTLs, configurable with
+`PANESHIP_LANG_TTL_MS`, `PANESHIP_PACKAGE_TTL_MS`, and `PANESHIP_ENV_TTL_MS`.
+See [docs/architecture.md](docs/architecture.md) for the full design, the IPC
+protocol, detector extension points, and reliability guarantees.
 
 ---
 
-##  Benchmarks
+## Benchmarks
 
-*Measured on an Apple Silicon (M-series) host with a target budget of 4 tmux panes; run `paneship benchmark` to reproduce.*
+Measured on an Apple Silicon (M-series) host with a target budget of 4 tmux
+panes. Run `paneship benchmark` to reproduce on your hardware.
 
 | Stage | Average | Notes |
-|-------|---------|-------|
-| **Paneship render (in-process, 4 panes)** | **~0.35ms** | `paneship benchmark` — 344µs avg, components sum to ~150µs |
-| **Daemon IPC + render round trip** | **< 1ms** | daemon-mode delta over a bare process spawn |
-| Process startup (shell `exec`) | ~8ms | fixed OS cost paid by every prompt engine |
-| Paneship (cold start, no daemon) | ~35.0ms | bounded first-render Git compute |
-| Starship Prompt | ~20.0ms | |
-| Oh My Zsh (default setup) | ~150.0ms+ | noticeable lag |
+| ----- | ------- | ----- |
+| **Paneship render (in-process, 4 panes)** | **~0.35 ms** | `paneship benchmark` — ~344 µs average |
+| **Daemon IPC + render round trip** | **< 1 ms** | Delta over a bare process spawn |
+| Process startup (shell `exec`) | ~8 ms | Fixed OS cost paid by every prompt engine |
+| Paneship (cold start, no daemon) | ~35 ms | Bounded first-render Git compute |
+| Starship Prompt | ~20 ms | |
+| Oh My Zsh (default setup) | ~150 ms+ | Noticeable lag |
 
-The render path is well inside the **2.5ms** budget: the expensive work (Git
-`gix` status, manifest parsing, infrastructure probes) runs in background
-workers, and the daemon serves cached regions over a local socket.
+The render path stays inside the **2.5 ms** target because Git `gix` status,
+manifest parsing, and infrastructure probes run in background workers, and the
+daemon serves cached regions over a local socket.
 
-> The `benchmark` harness pins a fixed width. Passing no width would make
-> `PromptContext` probe the terminal/`tmux`, so the timer would measure a
-> subprocess spawn instead of the render path.
-
----
-
-##  CLI Commands
-
-### General
-- `paneship --version`: Print the installed version and exit.
-- `paneship help`: Print usage and exit.
-
-### Prompt Rendering
-- `paneship render`: Renders the prompt based on default parameters.
-- `paneship render --shell zsh`: Format ANSI sequences specifically for Zsh.
-- `paneship render --exit-code 1`: Renders the prompt demonstrating a command failure.
-- `paneship render --cwd /path/to/dir`: Mock prompt rendering for a specific directory.
-- `paneship render --width 100`: Specify custom width constraints.
-- `paneship render --duration-ms 500`: Renders the prompt with a command execution duration.
-- `paneship render --layout split`: Emit the structured `left \u001f right \n cursor` regions used to bind native right prompts (`rprompt` is an accepted alias).
-
-### Configuration
-- `paneship config`: Opens the interactive TUI configurator with a live prompt preview. `Ctrl+S` saves atomically and hot-reloads the daemon.
-
-### Daemon Administration
-- `paneship daemon`: Spawns the background socket server daemon.
-- `paneship daemon ping`: Verifies that the daemon is active and responding.
-- `paneship daemon reload`: Asks the running daemon to re-read `config.toml` (used by the TUI after saving).
-- `paneship invalidate [--cwd <path>]`: Signals the daemon that Git metadata under `<path>` changed (used by the shell hooks).
-
-### Performance Testing & Monitoring
-- `paneship benchmark`: Runs multiple prompt iterations to verify rendering speed.
-- `paneship benchmark --iterations 150 --panes 4`: Test concurrent rendering under load.
-- `paneship benchmark --compare-starship`: Run head-to-head comparison benchmarks.
-- `paneship top`: Live daemon telemetry — worker utilization, cache hit ratios and average lookup latency, LRU evictions, watcher throughput, and a rolling (8-sample) render/git/event rate.
-- `paneship top --once`: Print a single telemetry snapshot and exit (useful for scripts and CI).
-- `paneship top --json`: Emit the telemetry snapshot as JSON.
-- `paneship top --benchmark`: Run the local in-process component micro-benchmark instead of querying the daemon.
+> The benchmark pins a fixed width. Resolving the terminal width inside the
+> timed loop can spawn `tmux` and would measure process startup instead of the
+> render path.
 
 ---
 
-##  Troubleshooting
+## CLI
 
-### My prompt icons are showing as boxes or garbled text?
-Paneship defaults to the `nerdfont` icon profile, which requires a [Nerd Font](https://www.nerdfonts.com/) (e.g. *FiraCode Nerd Font*). If you cannot install one, switch profiles in `~/.config/paneship/config.toml`:
+| Command | Description |
+| ------- | ----------- |
+| `paneship render` | Render the prompt (also the default with no arguments). |
+| `paneship init <shell>` | Print or install shell integration. |
+| `paneship config` | Open the interactive TUI configurator. |
+| `paneship daemon [ping\|reload]` | Start, check, or reload the daemon. |
+| `paneship invalidate [--cwd <path>]` | Tell the daemon that Git state changed. |
+| `paneship benchmark` | Measure the render path. |
+| `paneship top` | Show live daemon telemetry. |
+| `paneship --version` / `paneship help` | Print version or usage. |
+
+Common examples:
+
+```bash
+paneship render --shell zsh --layout split
+paneship render --cwd /path/to/repo --exit-code 1 --width 100
+paneship benchmark --iterations 300 --panes 4 --compare-starship
+paneship top --once
+```
+
+The full command, flag, output-format, and exit-code reference is in
+**[docs/cli.md](docs/cli.md)**.
+
+---
+
+## Troubleshooting
+
+### Icons show as boxes or garbled text
+
+The default `nerdfont` profile needs a patched Nerd Font. Switch profiles if you
+cannot install one:
 
 ```toml
 [icons]
-profile = "emoji"   # explicit opt-in; or "minimal" for pure ASCII
+profile = "minimal"   # or "emoji"
 ```
 
-Run `paneship config` to switch profiles interactively and preview the result.
+Run `paneship config` to change profiles with a live preview.
 
-### The prompt is not showing git updates/metadata?
-Ensure that the daemon process is running. You can check it via:
+### Git updates or metadata are missing
+
+Check the daemon and force a refresh:
+
 ```bash
 paneship daemon ping
+paneship invalidate --cwd "$PWD"
 ```
-If it is not responding, you can start the daemon manually or verify your shell config eval is running correctly.
+
+More diagnostics, including logs, placeholders, narrow panes, and reset steps,
+are in **[docs/troubleshooting.md](docs/troubleshooting.md)**.
 
 ---
 
-##  Roadmap
+## Documentation
 
-### Core Enhancements
-- [x] **Cross-Platform Daemon** – The IPC transport is abstracted behind an `IpcListener` trait with Unix domain socket and Windows named pipe adapters.
-- [x] **Interactive Configurator** – A built-in TUI (`paneship config`) to visually customize themes and modules.
-- [ ] **WASM Plugin System** – Allow users to create custom prompt modules using any language that compiles to WebAssembly.
-- [x] **Right-Side Prompt (RPROMPT)** – Native, width-aware right-aligned metadata in Zsh (`RPROMPT`), Fish (`fish_right_prompt`) and Nushell (`PROMPT_COMMAND_RIGHT`), with priority-based collapse in narrow panes.
-- [x] **Windows Named-Pipe Hardening** – User-scoped pipe ACLs, remote-client rejection, and `ERROR_PIPE_BUSY` exponential-backoff reconnect loops.
-
-### New Modules
-- [x] **Infrastructure Suite** – Kubernetes context/namespace, container, and AWS/GCP/Azure profile detection, each capped at a 10 ms background budget.
-- [x] **Nix/Direnv Integration** – Visual indicators for active Nix shells and direnv-loaded environments.
-- [x] **System Health (opt-in)** – CPU load pressure and low-battery indicators (Linux `/sys` and macOS `pmset`).
-- [x] **Per-Detector Cache TTLs** – Independent TTLs for Git, language, package and environment caches via `PANESHIP_*_TTL_MS`.
-- [ ] **Package Manager Updates** – Background checks for pending updates in `brew`, `apt`, or `cargo`.
-
-### Developer Experience
-- [x] **One-line Installer** – `install.sh` downloads the matching prebuilt binary and falls back to a Cargo source build.
-- [ ] **VSCode & JetBrains Integration** – Optimized rendering for integrated terminals to avoid icon clipping and alignment issues.
-- [ ] **Enhanced Onboarding** – One-click setup for more esoteric shells and WSL2 environments.
+| Document | Contents |
+| -------- | -------- |
+| [Documentation index](docs/README.md) | Start here for all guides |
+| [Configuration](docs/configuration.md) | `config.toml`, profiles, themes, environment variables |
+| [CLI reference](docs/cli.md) | Commands, flags, wire formats, exit codes |
+| [Architecture](docs/architecture.md) | Process model, IPC, caching, detectors, rendering |
+| [Troubleshooting](docs/troubleshooting.md) | Icons, daemon, stale state, logs, reset |
+| [Releasing](docs/releasing.md) | Versioning, release checklist, artifacts |
+| [Contributing](CONTRIBUTING.md) | Development setup, tests, coding standards |
+| [Changelog](CHANGELOG.md) | Release history |
+| [Support](SUPPORT.md) | Where to ask questions and how to collect diagnostics |
+| [Security policy](SECURITY.md) | Supported versions and private reporting |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | Community expectations |
 
 ---
 
-##  Contributing
+## Roadmap
 
-Contributions make the open-source community an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+### Core enhancements
 
-Please review the [CONTRIBUTING.md](./CONTRIBUTING.md) guide for details on coding standards, commit messages, and the Pull Request submission process.
+- [x] **Cross-platform daemon** – IPC abstracted behind an `IpcListener` trait
+  with Unix domain socket and Windows named pipe adapters.
+- [x] **Interactive configurator** – A TUI (`paneship config`) for themes,
+  profiles, and prompt settings.
+- [x] **Right-side prompt (RPROMPT)** – Width-aware native right prompts for Zsh,
+  Fish, and Nushell, with priority-based collapse.
+- [x] **Windows named-pipe hardening** – User-scoped ACLs, remote-client
+  rejection, and `ERROR_PIPE_BUSY` backoff.
+- [ ] **WASM plugin system** – User-defined prompt modules compiled to
+  WebAssembly.
+
+### Modules
+
+- [x] **Infrastructure suite** – Kubernetes, container, cloud, and Nix/Direnv
+  detection with per-detector budgets.
+- [x] **System health (opt-in)** – CPU load pressure and low-battery indicators.
+- [x] **Per-detector cache TTLs** – Independent Git, language, package, and
+  environment TTLs.
+- [ ] **Package-manager updates** – Background checks for `brew`, `apt`, or
+  `cargo`.
+
+### Developer experience
+
+- [x] **One-line installer** – Prebuilt downloads with a Cargo source fallback.
+- [ ] **Editor integrations** – Optimized rendering for VS Code and JetBrains
+  integrated terminals.
+- [ ] **Enhanced onboarding** – More esoteric shells and WSL2 setup.
 
 ---
 
-##  License
+## Contributing
+
+Contributions of all sizes are welcome: bug reports, documentation fixes,
+detectors, shell integrations, and performance work.
+
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md).
+2. Run `make check` before opening a pull request.
+3. Use the issue and pull-request templates.
+4. Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Please do not report security vulnerabilities in public issues. See
+[SECURITY.md](SECURITY.md).
+
+---
+
+## License
 
 Distributed under the MIT License. See [LICENSE](./LICENSE) for details.
 
 ---
 
 <div align="center">
+
 Made with ❤️ by the Paneship community
+
 </div>

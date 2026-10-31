@@ -50,3 +50,11 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-targets --locked
+
+      - name: Check rustdoc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --locked
+
+      - name: Check package contents
+        run: cargo package --locked --no-verify
