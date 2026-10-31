@@ -38,3 +38,7 @@ install/**/*.pkg
 
 # ohgo runtime state
 .ohgo/
+
+# macOS metadata
+.DS_Store
+**/.DS_Store

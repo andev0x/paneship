@@ -113,7 +113,7 @@ fn main() {
                 RenderLayout::Combined => {
                     apply_shell_wrapping(core::renderer::combine(&parts, width), options.shell)
                 }
-                RenderLayout::Split => render_split(&parts, options.shell),
+                RenderLayout::Split => render_split(parts, options.shell),
             };
             print!("{prompt}");
         }
@@ -209,10 +209,12 @@ fn apply_shell_wrapping(prompt: String, shell: RenderShell) -> String {
 /// Wire format: `left \u{1f} right \n cursor`. Each region is ANSI-wrapped for
 /// the target shell *before* joining, so a right-aligned `RPROMPT` measures
 /// correctly even in emulators that do not understand bare escape sequences.
-fn render_split(parts: &core::renderer::PromptParts, shell: RenderShell) -> String {
-    let left = apply_shell_wrapping(parts.left.clone(), shell);
-    let right = apply_shell_wrapping(parts.right.clone(), shell);
-    let cursor = apply_shell_wrapping(parts.cursor.clone(), shell);
+fn render_split(parts: core::renderer::PromptParts, shell: RenderShell) -> String {
+    // Consume the regions instead of cloning them: the render path owns this
+    // value and every byte here is on the prompt latency budget.
+    let left = apply_shell_wrapping(parts.left, shell);
+    let right = apply_shell_wrapping(parts.right, shell);
+    let cursor = apply_shell_wrapping(parts.cursor, shell);
     format!("{left}{RPROMPT_SEPARATOR}{right}\n{cursor}")
 }
 

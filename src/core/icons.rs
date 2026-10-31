@@ -13,21 +13,30 @@
 //! name = "default"     # default | dracula | nord | tokyo-night | gruvbox
 //! ```
 //!
-//! Any explicit per-section value (`directory.icon`, `status.success_icon`, …)
+//! Any explicit per-section value (`status.success_icon`, `git.branch_icon`, …)
 //! still wins over the profile, so existing configurations keep working.
 //!
-//! The directory prefix is special: when `[directory].icon` is empty it uses
-//! the detected project language glyph, and falls back to the host operating
-//! system glyph for directories that do not belong to a project (including the
-//! home directory).
+//! # Glyph policy
+//!
+//! The default `nerdfont` profile is strictly **emoji-free**: every glyph is a
+//! Nerd Font code point or a standard geometric Unicode symbol. The `emoji`
+//! profile is an explicit, manually selected opt-in and is never chosen by
+//! [`IconProfile::default`].
+//!
+//! The left prompt path is pure text: there is no directory, folder or project
+//! prefix glyph. Host OS identification lives in the right-side telemetry
+//! region, and runtime/toolchain glyphs travel with the runtime version there,
+//! so `cd`/`z` navigation can never leak a logo into the left prompt.
 
 /// Built-in icon profiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IconProfile {
-    /// Full Nerd Font glyph suite (requires a patched font).
+    /// Full Nerd Font glyph suite (requires a patched font). This is the
+    /// default and contains no raw emoji.
     #[default]
     NerdFont,
-    /// Universal Unicode emoji, renders in nearly every modern terminal.
+    /// Universal Unicode emoji. Explicit opt-in only: selecting this profile is
+    /// the supported way to override the emoji-free default policy.
     Emoji,
     /// Pure ASCII fallback for constrained environments or SSH sessions.
     Minimal,
@@ -60,7 +69,7 @@ impl IconProfile {
     pub fn label(self) -> &'static str {
         match self {
             Self::NerdFont => "Nerd Font",
-            Self::Emoji => "Emoji",
+            Self::Emoji => "Emoji (opt-in)",
             Self::Minimal => "Minimal (ASCII)",
         }
     }
@@ -77,14 +86,12 @@ impl IconProfile {
 
 /// Static glyph tokens for one [`IconProfile`].
 pub struct ProfileIcons {
-    pub directory: &'static str,
     pub git_branch: &'static str,
     pub git_staged: &'static str,
     pub git_unstaged: &'static str,
     pub git_untracked: &'static str,
     pub success: &'static str,
     pub failure: &'static str,
-    pub package: &'static str,
     pub time: &'static str,
     pub duration: &'static str,
     pub placeholder_git: &'static str,
@@ -136,14 +143,14 @@ pub fn current_os_key() -> &'static str {
 }
 
 static NERD_FONT: ProfileIcons = ProfileIcons {
-    directory: "\u{f07b}",
     git_branch: "\u{e0a0}",
     git_staged: "+",
     git_unstaged: "!",
     git_untracked: "?",
-    success: "\u{279c}",
-    failure: "\u{2717}",
-    package: "\u{f1b2}",
+    // The canonical prompt cursor: a clean geometric chevron, not an emoji.
+    // Failure keeps the same symbol and signals through colour plus `[code]`.
+    success: "\u{276f}",
+    failure: "\u{276f}",
     time: "\u{f2f2}",
     duration: "\u{f19b}",
     placeholder_git: "[git...]",
@@ -212,14 +219,13 @@ static NERD_FONT: ProfileIcons = ProfileIcons {
 };
 
 static EMOJI: ProfileIcons = ProfileIcons {
-    directory: "\u{1f4c1}",
     git_branch: "\u{1f33f}",
     git_staged: "+",
     git_unstaged: "!",
     git_untracked: "?",
-    success: "\u{27a1}",
+    // Keep the prompt cursor geometric even in the opt-in emoji profile.
+    success: "\u{276f}",
     failure: "\u{274c}",
-    package: "\u{1f4e6}",
     time: "\u{1f552}",
     duration: "\u{23f1}",
     placeholder_git: "[git...]",
@@ -288,14 +294,12 @@ static EMOJI: ProfileIcons = ProfileIcons {
 };
 
 static MINIMAL: ProfileIcons = ProfileIcons {
-    directory: "dir:",
     git_branch: "git:",
     git_staged: "+",
     git_unstaged: "!",
     git_untracked: "?",
     success: ">",
     failure: "x",
-    package: "pkg:",
     time: "time:",
     duration: "took:",
     placeholder_git: "[git...]",
@@ -441,6 +445,8 @@ pub struct ThemeColors {
     pub failure: &'static str,
     pub time: &'static str,
     pub paneship: &'static str,
+    /// Colour for the OS identification glyph in the right telemetry region.
+    pub os: &'static str,
     /// Colour for infrastructure/environment tokens.
     pub environment: &'static str,
     pub languages: &'static [(&'static str, &'static str)],
@@ -466,6 +472,7 @@ static THEME_DEFAULT: ThemeColors = ThemeColors {
     failure: "31",
     time: "2;37",
     paneship: "1;32",
+    os: "2;37",
     environment: "1;35",
     languages: &[
         ("rust", "1;33"),
@@ -522,6 +529,7 @@ static THEME_DRACULA: ThemeColors = ThemeColors {
     failure: "38;5;203",
     time: "38;5;103",
     paneship: "1;38;5;212",
+    os: "38;5;103",
     environment: "38;5;141",
     languages: &[
         ("rust", "38;5;209"),
@@ -578,6 +586,7 @@ static THEME_NORD: ThemeColors = ThemeColors {
     failure: "38;5;174",
     time: "38;5;245",
     paneship: "1;38;5;108",
+    os: "38;5;245",
     environment: "38;5;110",
     languages: &[
         ("rust", "38;5;216"),
@@ -634,6 +643,7 @@ static THEME_TOKYO_NIGHT: ThemeColors = ThemeColors {
     failure: "38;5;210",
     time: "38;5;60",
     paneship: "1;38;5;176",
+    os: "38;5;60",
     environment: "38;5;111",
     languages: &[
         ("rust", "38;5;216"),
@@ -690,6 +700,7 @@ static THEME_GRUVBOX: ThemeColors = ThemeColors {
     failure: "38;5;167",
     time: "38;5;245",
     paneship: "1;38;5;142",
+    os: "38;5;245",
     environment: "38;5;109",
     languages: &[
         ("rust", "38;5;214"),
@@ -765,13 +776,7 @@ mod tests {
     #[test]
     fn minimal_profile_is_pure_ascii() {
         let icons = IconProfile::Minimal.tokens();
-        for token in [
-            icons.directory,
-            icons.git_branch,
-            icons.package,
-            icons.time,
-            icons.duration,
-        ] {
+        for token in [icons.git_branch, icons.time, icons.duration] {
             assert!(token.is_ascii(), "token not ASCII: {token:?}");
         }
         for (name, icon) in icons.languages {
@@ -819,5 +824,69 @@ mod tests {
             IconProfile::NerdFont.tokens().operating_system("windows"),
             Some("\u{f17a}")
         );
+    }
+
+    #[test]
+    fn default_profile_is_nerdfont_and_emoji_free() {
+        assert_eq!(IconProfile::default(), IconProfile::NerdFont);
+        for profile in [IconProfile::NerdFont, IconProfile::Minimal] {
+            let icons = profile.tokens();
+            for token in [
+                icons.git_branch,
+                icons.git_staged,
+                icons.git_unstaged,
+                icons.git_untracked,
+                icons.success,
+                icons.failure,
+                icons.time,
+                icons.duration,
+            ] {
+                assert!(
+                    !contains_emoji(token),
+                    "{} prompt token contains a raw emoji: {token:?}",
+                    profile.as_str()
+                );
+            }
+            for (name, icon) in icons.languages {
+                assert!(
+                    !contains_emoji(icon),
+                    "{} language {name} contains a raw emoji: {icon:?}",
+                    profile.as_str()
+                );
+            }
+            for (name, icon) in icons.environments {
+                assert!(
+                    !contains_emoji(icon),
+                    "{} environment {name} contains a raw emoji: {icon:?}",
+                    profile.as_str()
+                );
+            }
+            for (name, icon) in icons.operating_systems {
+                assert!(
+                    !contains_emoji(icon),
+                    "{} OS {name} contains a raw emoji: {icon:?}",
+                    profile.as_str()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prompt_cursor_is_a_geometric_chevron() {
+        assert_eq!(IconProfile::NerdFont.tokens().success, "\u{276f}");
+        assert_eq!(IconProfile::Emoji.tokens().success, "\u{276f}");
+        assert_eq!(IconProfile::Minimal.tokens().success, ">");
+    }
+
+    /// Conservative emoji detector for the default profiles. Covers the
+    /// pictographic blocks Nerd Font users would notice as "emoji" pollution.
+    fn contains_emoji(value: &str) -> bool {
+        value.chars().any(|ch| {
+            matches!(
+                ch as u32,
+                0x1f000..=0x1faff // emoji, pictographs, symbols and supplemental
+                    | 0x2600..=0x27bf // misc symbols + dingbats (emoji-presented subset)
+            ) && !matches!(ch, '\u{276f}' | '\u{2717}' | '\u{279c}')
+        })
     }
 }

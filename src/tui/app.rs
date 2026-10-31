@@ -47,11 +47,6 @@ pub static SECTIONS: &[Section] = &[
         title: "Directory",
         fields: &[
             FieldDef {
-                label: "Icon",
-                path: &["directory", "icon"],
-                kind: FieldKind::Text,
-            },
-            FieldDef {
                 label: "Truncation length",
                 path: &["directory", "truncation_length"],
                 kind: FieldKind::Int { min: 1, max: 9 },
@@ -585,9 +580,9 @@ mod tests {
         // Sections: Directory(0) Git(1) Status(2) Metadata(3) Icon Sets(4) Theme(5)
         app.section = 4;
         app.field = 0;
-        let before = app.config.directory_icon().to_string();
+        let before = app.config.language_style("rust").icon;
         app.activate();
-        let after = app.config.directory_icon().to_string();
+        let after = app.config.language_style("rust").icon;
         assert_ne!(before, after, "profile switch should change resolved icon");
         assert!(app.dirty);
     }
@@ -595,8 +590,8 @@ mod tests {
     #[test]
     fn editing_writes_into_document() {
         let mut app = headless();
-        app.section = 0;
-        app.field = 0; // Directory icon (text)
+        app.section = 1;
+        app.field = 1; // Git staged icon (text)
         app.activate();
         assert!(app.edit.is_some());
         if let Some(edit) = app.edit.as_mut() {
@@ -604,17 +599,16 @@ mod tests {
         }
         app.commit_edit();
         assert_eq!(
-            app.get_str(&["directory", "icon"]).as_deref(),
+            app.get_str(&["git", "staged_icon"]).as_deref(),
             Some("CUSTOM")
         );
-        assert_eq!(app.config.directory_icon(), "CUSTOM");
     }
 
     #[test]
     fn toggling_bool_flips_value() {
         let mut app = headless();
         app.section = 0;
-        app.field = 2; // truncate_to_repo
+        app.field = 1; // truncate_to_repo
         let before = app.get_bool(&["directory", "truncate_to_repo"]).unwrap();
         app.activate();
         let after = app.get_bool(&["directory", "truncate_to_repo"]).unwrap();

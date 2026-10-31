@@ -6,8 +6,8 @@
 # ---------------------------------------------------------------------------
 # Icon set (Phase 2). Selects a glyph profile for every prompt segment so you
 # do not have to hand-edit each icon. Any explicit icon below still wins.
-#   nerdfont : full Nerd Font glyph suite (requires a patched font)
-#   emoji    : universal Unicode emoji
+#   nerdfont : full Nerd Font glyph suite (default, emoji-free)
+#   emoji    : universal Unicode emoji (explicit opt-in only)
 #   minimal  : pure ASCII fallback (SSH / constrained terminals)
 # ---------------------------------------------------------------------------
 [icons]
@@ -24,6 +24,10 @@ name = "default"
 # Right-side prompt (RPROMPT, Phase 3). Native right prompts are bound by the
 # zsh/fish init scripts; the right region is dropped (and low-priority elements
 # collapse first) when the terminal is narrower than rprompt_min_width.
+#
+# Telemetry order: OS/environment identification, runtime/toolchain version,
+# command execution time, system timestamp. The left prompt is context only:
+# cursor, cwd, Git state and project version. OS glyphs never prefix the path.
 # ---------------------------------------------------------------------------
 [prompt]
 rprompt = true
@@ -57,8 +61,7 @@ health = false      # opt-in CPU load pressure / low battery (Linux + macOS)
 # ---------------------------------------------------------------------------
 
 [directory]
-# Empty = detected project language icon, or the host OS icon outside projects.
-icon = ""
+# The left path is pure text: no folder, project or OS prefix glyph is drawn.
 # Number of path segments to keep before truncation.
 truncation_length = 3
 # Truncate to repository root if inside a Git repo.

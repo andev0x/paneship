@@ -34,7 +34,7 @@ By leveraging a persistent background daemon, asynchronous Git checks, and smart
 -  **Non-Blocking Async Detection** – Git status checks and language/runtime detection run in background workers. Metadata never blocks the render path; a `[lang...]` placeholder fills in until the worker reports back.
 -  **Modular Detector Registry** – Every language lives behind a single `Detector` trait in its own file, reading version pins directly from `Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, … with no external subprocess.
 -  **Interactive Configurator** – `paneship config` opens a TUI with a live prompt preview, atomic saves, and instant daemon hot-reload.
--  **Icon Sets & Themes** – Built-in `nerdfont`, `emoji` and `minimal` (ASCII) profiles plus colour themes, so prompt formatting adapts to any terminal or font.
+-  **Icon Sets & Themes** – Built-in `nerdfont` (default, strictly emoji-free), `emoji` (explicit opt-in) and `minimal` (ASCII) profiles plus colour themes, so prompt formatting adapts to any terminal or font.
 -  **Multi-Shell Compatibility** – Native integration scripts for Zsh, Bash, Fish, PowerShell, Nushell, Elvish, Xonsh, Tcsh, Ion, and Cmd.
 -  **Tmux-Aware & Responsive** – Automatically detects tmux pane width changes and truncates long paths or metadata gracefully.
 -  **Git Integration** – Visual branch status, staged, unstaged, and untracked counts computed efficiently.
@@ -187,17 +187,17 @@ Prompt glyphs and colours resolve from an **icon profile** and **theme**, so you
 
 ```toml
 [icons]
-profile = "nerdfont"   # nerdfont | emoji | minimal
+profile = "nerdfont"   # nerdfont (default) | emoji (opt-in) | minimal
 
 [theme]
 name = "default"       # default | dracula | nord | tokyo-night | gruvbox
 
 [prompt]
-rprompt = true         # render the right-aligned metadata region
+rprompt = true         # render the right-aligned telemetry region
 rprompt_min_width = 20 # below this width the right region is dropped
 
 [environment]
-enabled = true         # master switch for the environment segment
+enabled = true         # master switch for environment identification
 kubernetes = true      # ~/.kube/config context + namespace
 docker = true          # /.dockerenv, /proc/1/cgroup, $container
 cloud = true           # active AWS / GCP / Azure profile
@@ -205,7 +205,6 @@ nix_direnv = true      # IN_NIX_SHELL and .envrc state
 health = false         # opt-in CPU load pressure / low battery
 
 [directory]
-icon = ""              # empty = detected language icon, else host OS icon
 truncation_length = 3
 truncate_to_repo = true
 
@@ -224,16 +223,16 @@ time_color = ""        # empty = active theme
 paneship_color = ""    # empty = active theme
 ```
 
-> **Note**: An emoji-based configuration is available in the [example_config.toml](./example_config.toml) file. Switching `profile = "emoji"` or `"minimal"` updates every segment at once.
+> **Glyph policy**: the default `nerdfont` profile contains no raw emoji — only Nerd Font glyphs and standard geometric symbols such as the `❯` prompt cursor. The `emoji` profile is an explicit, manual opt-in; it is never selected by default.
 >
-> The directory prefix is context-aware: inside a project it shows the detected language glyph (Rust, Node, Go, Python, …), and outside any project — including the home directory — it shows the host operating system glyph (macOS, Windows, Linux, BSD). Set `[directory].icon` to pin a single glyph everywhere.
+> **Layout contract**: the left prompt is reserved for context — the `❯` cursor, the shortened working directory, Git state and the project version. The path is pure text: it is never prefixed by a folder, project-language or OS glyph. Host OS glyphs, infrastructure/environment badges, runtime versions, command duration and the clock are right-aligned telemetry. OS identification never appears before the path, so `cd`/`z` navigation cannot leak a platform logo into the left prompt.
 
 ### Configuration Reference
 
 #### `[icons]`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `profile` | String | `"nerdfont"` | Glyph profile: `nerdfont`, `emoji`, or `minimal` (pure ASCII). |
+| `profile` | String | `"nerdfont"` | Glyph profile: `nerdfont` (default, emoji-free), `emoji` (explicit opt-in), or `minimal` (pure ASCII). |
 
 #### `[theme]`
 | Parameter | Type | Default | Description |
@@ -259,9 +258,10 @@ paneship_color = ""    # empty = active theme
 #### `[directory]`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `icon` | String | `""` | Icon prefix before the path. Empty uses the detected project language icon, or the host OS icon (macOS/Windows/Linux/BSD) outside projects. |
 | `truncation_length` | Integer | `3` | Maximum folder depth to display before truncating. |
 | `truncate_to_repo` | Boolean | `true` | If true, automatically hides paths outside the Git repository root when inside a repo. |
+
+> `[directory].icon` is no longer rendered. The left path is always pure text; older configs containing the key still parse and the key is ignored.
 
 #### `[git]`
 | Parameter | Type | Default | Description |
@@ -405,7 +405,7 @@ Paneship defaults to the `nerdfont` icon profile, which requires a [Nerd Font](h
 
 ```toml
 [icons]
-profile = "emoji"   # or "minimal" for pure ASCII
+profile = "emoji"   # explicit opt-in; or "minimal" for pure ASCII
 ```
 
 Run `paneship config` to switch profiles interactively and preview the result.
