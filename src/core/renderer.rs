@@ -1,7 +1,28 @@
+//! Prompt region composition.
+//!
+//! The prompt is split into two independent pipelines that never share segment
+//! builders:
+//!
+//! * [`left_segments`] — context only: directory, Git and project version.
+//! * [`right_segments`] — telemetry only: OS/environment identification,
+//!   runtime/toolchain version, command duration and clock.
+//!
+//! Keeping the pipelines separate is an architectural invariant, not just a
+//! formatting choice: host OS logos and infrastructure badges are resolved by
+//! the right region alone, so directory navigation (`cd`, `z`) cannot leak an
+//! icon into the left prompt.
+
 use crate::core::layout::visible_width;
 use crate::core::prompt::PromptContext;
-use crate::modules::{directory, environment, git, metadata, package, status};
+use crate::modules::{directory, git, metadata, package, status};
 use serde::{Deserialize, Serialize};
+
+/// Separator between left-context segments.
+const LEFT_SEPARATOR: &str = "  ";
+/// Wider separator before the project version, for visual grouping.
+const PACKAGE_SEPARATOR: &str = "  ·  ";
+/// Keep at least this much room for the left context when sizing the RPROMPT.
+const MIN_LEFT_BUDGET: usize = 16;
 
 /// Structured prompt output split into its layout regions.
 ///
@@ -11,10 +32,11 @@ use serde::{Deserialize, Serialize};
 /// first line.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PromptParts {
-    /// Left-aligned prompt content (directory, git, environment, package).
+    /// Left-aligned context (directory, Git, project version). Never contains
+    /// OS, distribution or environment identification.
     pub left: String,
-    /// Right-aligned metadata (language, duration, clock). Empty when disabled
-    /// or when the pane is too narrow to host it.
+    /// Right-aligned telemetry (OS/environment, runtime, duration, clock).
+    /// Empty when disabled or when the pane is too narrow to host it.
     pub right: String,
     /// Cursor / exit-status segment rendered on its own line.
     pub cursor: String,
@@ -27,13 +49,16 @@ pub fn render(context: &PromptContext) -> String {
 
 /// Render the structured prompt regions without combining them.
 ///
-/// Width-aware allocation happens here: the daemon knows the terminal width
-/// budget and reserves space for the right region before laying out the left,
-/// so a long directory can never push the RPROMPT into a second terminal row.
+/// Width-aware allocation happens here: the right region is measured first and
+/// its column budget is reserved before the left context is laid out, so a long
+/// directory can never push the RPROMPT onto a second terminal row.
 pub fn render_parts(context: &PromptContext) -> PromptParts {
     let width = context.width.max(1);
+
+    // Build the right pipeline first, then reserve its width. The two
+    // pipelines are otherwise independent and read disjoint segment builders.
     let right = if rprompt_enabled(context, width) {
-        render_right(context, width)
+        right_segments(context, width)
     } else {
         String::new()
     };
@@ -46,7 +71,7 @@ pub fn render_parts(context: &PromptContext) -> PromptParts {
     };
 
     PromptParts {
-        left: render_left(context, left_budget),
+        left: left_segments(context, left_budget),
         right,
         cursor: status::render_cursor(context),
     }
@@ -58,27 +83,43 @@ pub fn combine(parts: &PromptParts, width: usize) -> String {
     let right_width = visible_width(parts.right.as_str());
     let left_width = visible_width(parts.left.as_str());
 
-    let first_line = if right_width == 0 || left_width + 1 + right_width > width {
-        parts.left.clone()
-    } else {
-        let spacing = width.saturating_sub(left_width + right_width);
-        format!("{}{}{}", parts.left, " ".repeat(spacing), parts.right)
-    };
+    let mut output = String::with_capacity(
+        parts.left.len() + parts.right.len() + parts.cursor.len() + width + 2,
+    );
 
-    format!("{first_line}\n{}", parts.cursor)
+    output.push_str(parts.left.as_str());
+
+    if right_width > 0 && left_width + 1 + right_width <= width {
+        for _ in 0..width.saturating_sub(left_width + right_width) {
+            output.push(' ');
+        }
+        output.push_str(parts.right.as_str());
+    }
+
+    output.push('\n');
+    output.push_str(parts.cursor.as_str());
+    output
 }
 
 fn rprompt_enabled(context: &PromptContext, width: usize) -> bool {
     context.config.prompt.rprompt && width >= context.config.prompt.rprompt_min_width
 }
 
-fn render_right(context: &PromptContext, width: usize) -> String {
-    let min_left_budget = 16;
-    let right_budget = width.saturating_sub(min_left_budget + 1);
+/// Right telemetry pipeline.
+///
+/// Contractual order: OS/environment identification, runtime/toolchain,
+/// command execution time, system timestamp. The metadata module owns priority
+/// collapse within the reserved budget.
+fn right_segments(context: &PromptContext, width: usize) -> String {
+    let right_budget = width.saturating_sub(MIN_LEFT_BUDGET + 1);
     metadata::render_with_max_width(context, right_budget)
 }
 
-fn render_left(context: &PromptContext, max_visible_width: usize) -> String {
+/// Left context pipeline.
+///
+/// Only directory, Git and project/crate version are permitted here. OS and
+/// environment detection are intentionally absent.
+fn left_segments(context: &PromptContext, max_visible_width: usize) -> String {
     if max_visible_width == 0 {
         return String::new();
     }
@@ -94,21 +135,14 @@ fn render_left(context: &PromptContext, max_visible_width: usize) -> String {
     let mut left = directory::render_with_max_width(context, dir_budget);
     left = append_segment(
         left,
-        "  ",
+        LEFT_SEPARATOR,
         git::render_with_max_width,
-        context,
-        max_visible_width,
-    );
-    left = append_segment(
-        left,
-        "  ",
-        environment::render_with_max_width,
         context,
         max_visible_width,
     );
     append_segment(
         left,
-        "  ·  ",
+        PACKAGE_SEPARATOR,
         package::render_with_max_width,
         context,
         max_visible_width,
@@ -139,11 +173,14 @@ fn append_segment(
         return current;
     }
 
-    let candidate = if current.is_empty() {
-        segment
-    } else {
-        format!("{current}{separator}{segment}")
-    };
+    if current.is_empty() {
+        return segment;
+    }
+
+    let mut candidate = String::with_capacity(current.len() + separator.len() + segment.len());
+    candidate.push_str(current.as_str());
+    candidate.push_str(separator);
+    candidate.push_str(segment.as_str());
 
     if visible_width(candidate.as_str()) <= max_visible_width {
         candidate
@@ -156,6 +193,8 @@ fn append_segment(
 mod tests {
     use super::*;
     use crate::core::config::Config;
+    use crate::core::prompt::MetadataState;
+    use crate::detectors::infra::{EnvironmentInfo, EnvironmentKind, EnvironmentSnapshot};
     use crate::modules::git::GitResolution;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -172,6 +211,20 @@ mod tests {
             package_state: None,
             environment_state: None,
         }
+    }
+
+    fn context_with_environment(width: usize) -> PromptContext {
+        let mut ctx = context(width);
+        ctx.environment_state = Some(MetadataState::Ready {
+            value: EnvironmentSnapshot {
+                entries: vec![EnvironmentInfo {
+                    kind: EnvironmentKind::Kubernetes,
+                    label: "prod/team-a".to_string(),
+                }],
+            },
+            stale: false,
+        });
+        ctx
     }
 
     #[test]
@@ -205,5 +258,123 @@ mod tests {
         let combined = combine(&parts, 120);
         let first_line = combined.lines().next().unwrap();
         assert!(visible_width(first_line) <= 120);
+    }
+
+    #[test]
+    fn os_icon_is_telemetry_only_never_left_context() {
+        let ctx = context_with_environment(120);
+        let parts = render_parts(&ctx);
+        assert!(
+            !parts.left.contains(ctx.config.os_icon()),
+            "OS icon leaked into the left prompt: {:?}",
+            parts.left
+        );
+        assert!(
+            parts.right.contains(ctx.config.os_icon()),
+            "right telemetry must identify the OS: {:?}",
+            parts.right
+        );
+    }
+
+    #[test]
+    fn infrastructure_tokens_are_right_aligned_not_path_prefixes() {
+        let ctx = context_with_environment(120);
+        let parts = render_parts(&ctx);
+        assert!(
+            !parts.left.contains("prod/team-a"),
+            "environment badge leaked into the left prompt: {:?}",
+            parts.left
+        );
+        assert!(
+            parts.right.contains("prod/team-a"),
+            "environment badge belongs to right telemetry: {:?}",
+            parts.right
+        );
+    }
+
+    #[test]
+    fn left_pipeline_orders_context_before_version() {
+        let mut ctx = context(120);
+        ctx.package_state = Some(MetadataState::Ready {
+            value: "1.2.3".to_string(),
+            stale: false,
+        });
+        let left = left_segments(&ctx, 120);
+        let plain = crate::core::layout::strip_ansi(&left);
+        assert!(
+            plain.contains("1.2.3"),
+            "package version missing: {plain:?}"
+        );
+        assert!(
+            plain.find("1.2.3").unwrap() > 0,
+            "version must follow the directory context: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn left_pipeline_starts_with_the_bare_path() {
+        let mut ctx = context(120);
+        ctx.cwd = PathBuf::from("/tmp/paneship");
+        ctx.language_state = Some(MetadataState::Ready {
+            value: crate::cache::LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            },
+            stale: false,
+        });
+
+        let left = left_segments(&ctx, 120);
+        let plain = crate::core::layout::strip_ansi(&left);
+        assert!(
+            plain.starts_with('/'),
+            "the left prompt must begin with a pure path: {plain:?}"
+        );
+        let runtime_icon = ctx.config.language_style("rust").icon;
+        assert!(
+            !plain.contains(&runtime_icon),
+            "the project language glyph leaked into the path: {plain:?}"
+        );
+        assert!(
+            !plain.contains(ctx.config.os_icon()),
+            "the OS glyph leaked into the path: {plain:?}"
+        );
+        assert!(
+            !plain.contains(ctx.config.time_icon()),
+            "the clock glyph leaked into the left prompt: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn package_version_carries_no_prefix_glyph() {
+        let mut ctx = context(120);
+        ctx.package_state = Some(MetadataState::Ready {
+            value: "1.2.3".to_string(),
+            stale: false,
+        });
+        let left = left_segments(&ctx, 120);
+        let plain = crate::core::layout::strip_ansi(&left);
+        assert!(
+            plain.contains("v1.2.3"),
+            "version must be plain text: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn os_glyph_appears_exactly_once_in_right_telemetry() {
+        let ctx = context_with_environment(120);
+        let parts = render_parts(&ctx);
+        let os = ctx.config.os_icon();
+        assert_eq!(
+            parts.right.matches(os).count(),
+            1,
+            "OS identification must appear exactly once: {:?}",
+            parts.right
+        );
+        assert_eq!(
+            parts.left.matches(os).count(),
+            0,
+            "OS identification is right-telemetry only: {:?}",
+            parts.left
+        );
     }
 }

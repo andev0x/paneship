@@ -9,13 +9,15 @@ use crate::cache::LanguageSnapshot;
 use crate::core::layout::visible_width;
 use crate::core::prompt::{MetadataState, PromptContext};
 use std::path::Path;
-use unicode_width::UnicodeWidthStr;
 
 /// Relative priority of each RPROMPT element. Higher values survive longer as
-/// the pane narrows: language/version is retained the longest, command timing
-/// is the first thing to collapse, then the clock.
+/// the pane narrows. The OS identification glyph is the anchor and is retained
+/// the longest; language/version follows, then the clock. Infrastructure tokens
+/// and command timing collapse first.
+const PRIORITY_OS: u8 = 110;
 const PRIORITY_LANGUAGE: u8 = 100;
 const PRIORITY_TIME: u8 = 80;
+const PRIORITY_ENVIRONMENT: u8 = 70;
 const PRIORITY_DURATION: u8 = 60;
 
 /// One candidate RPROMPT segment, with its display order and collapse priority.
@@ -49,9 +51,9 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     }
 
     let separator = "   ";
-    let separator_width = UnicodeWidthStr::width(separator);
+    let separator_width = visible_width(separator);
 
-    let mut candidates: Vec<Candidate> = metadata_parts(context)
+    let mut candidates: Vec<Candidate> = metadata_parts(context, max_visible_width)
         .into_iter()
         .filter(|candidate| candidate.width > 0)
         .collect();
@@ -89,9 +91,27 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         .join(separator)
 }
 
-fn metadata_parts(context: &PromptContext) -> Vec<Candidate> {
-    let mut parts = Vec::new();
+/// Build the right-telemetry candidates in their contractual display order:
+///
+/// 1. OS / environment identification
+/// 2. runtime / toolchain version
+/// 3. command execution time
+/// 4. system timestamp
+///
+/// The `order` field preserves this sequence after priority-based collapse.
+fn metadata_parts(context: &PromptContext, max_visible_width: usize) -> Vec<Candidate> {
+    let mut parts = Vec::with_capacity(5);
     let mut order = 0;
+
+    if let Some(os) = os_part(context) {
+        parts.push(Candidate::new(order, PRIORITY_OS, os));
+        order += 1;
+    }
+
+    if let Some(environment) = environment_part(context, max_visible_width) {
+        parts.push(Candidate::new(order, PRIORITY_ENVIRONMENT, environment));
+        order += 1;
+    }
 
     if let Some(language) = language_part(context) {
         parts.push(Candidate::new(order, PRIORITY_LANGUAGE, language));
@@ -113,6 +133,28 @@ fn metadata_parts(context: &PromptContext) -> Vec<Candidate> {
     }
 
     parts
+}
+
+/// Host OS identification glyph. Right telemetry only; never a path prefix.
+fn os_part(context: &PromptContext) -> Option<String> {
+    let icon = context.config.os_icon();
+    if icon.trim().is_empty() {
+        return None;
+    }
+    Some(styled(context.config.os_color(), icon))
+}
+
+/// Infrastructure tokens (Kubernetes, container, cloud, Nix/Direnv) are
+/// environment identification, so they belong beside the OS glyph on the
+/// right. They are emitted as one candidate so the outer priority allocator
+/// can drop the whole group when the pane narrows.
+fn environment_part(context: &PromptContext, max_visible_width: usize) -> Option<String> {
+    let rendered = crate::modules::environment::render_with_max_width(context, max_visible_width);
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(rendered)
+    }
 }
 
 /// Render the language segment from the pre-resolved state.
@@ -213,6 +255,7 @@ fn styled(color_code: &str, value: &str) -> String {
 mod tests {
     use super::*;
     use crate::core::config::Config;
+    use crate::detectors::infra::{EnvironmentInfo, EnvironmentKind, EnvironmentSnapshot};
     use std::sync::Arc;
 
     fn context(state: MetadataState<LanguageSnapshot>) -> PromptContext {
@@ -252,9 +295,84 @@ mod tests {
     }
 
     #[test]
-    fn absent_renders_nothing() {
+    fn absent_renders_no_language_placeholder() {
         let rendered = render_with_max_width(&context(MetadataState::Absent), 120);
         assert!(!rendered.contains("lang..."));
+    }
+
+    #[test]
+    fn right_telemetry_starts_with_os_identification() {
+        let ctx = context(MetadataState::Absent);
+        let rendered = render_with_max_width(&ctx, 120);
+        let plain = crate::core::layout::strip_ansi(&rendered);
+        assert!(
+            plain.starts_with(ctx.config.os_icon()),
+            "OS identification must lead the right region: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn right_telemetry_order_is_os_version_duration_clock() {
+        let ready = MetadataState::Ready {
+            value: LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            },
+            stale: false,
+        };
+        let mut ctx = context(ready);
+        ctx.last_command_duration_ms = Some(123);
+
+        let rendered = render_with_max_width(&ctx, 120);
+        let plain = crate::core::layout::strip_ansi(&rendered);
+
+        let os = plain.find(ctx.config.os_icon()).expect("OS glyph");
+        let version = plain.find("1.74").expect("runtime version");
+        let duration = plain.find("123ms").expect("duration");
+        let clock = plain
+            .find(current_time_hhmm().unwrap().as_str())
+            .expect("clock");
+
+        assert!(os < version, "OS must precede runtime: {plain:?}");
+        assert!(
+            version < duration,
+            "runtime must precede duration: {plain:?}"
+        );
+        assert!(duration < clock, "duration must precede clock: {plain:?}");
+    }
+
+    #[test]
+    fn environment_identification_sits_between_os_and_runtime() {
+        let ready = MetadataState::Ready {
+            value: LanguageSnapshot {
+                language: "rust".to_string(),
+                version: Some("1.74".to_string()),
+            },
+            stale: false,
+        };
+        let mut ctx = context(ready);
+        ctx.environment_state = Some(MetadataState::Ready {
+            value: EnvironmentSnapshot {
+                entries: vec![EnvironmentInfo {
+                    kind: EnvironmentKind::Kubernetes,
+                    label: "dev/team-a".to_string(),
+                }],
+            },
+            stale: false,
+        });
+
+        let rendered = render_with_max_width(&ctx, 120);
+        let plain = crate::core::layout::strip_ansi(&rendered);
+
+        let os = plain.find(ctx.config.os_icon()).expect("OS glyph");
+        let environment = plain.find("dev/team-a").expect("environment");
+        let version = plain.find("1.74").expect("runtime version");
+
+        assert!(os < environment, "OS must precede environment: {plain:?}");
+        assert!(
+            environment < version,
+            "environment must precede runtime: {plain:?}"
+        );
     }
 
     #[test]
@@ -273,8 +391,9 @@ mod tests {
         assert!(wide.contains("1.74"), "language missing: {wide:?}");
         assert!(wide.contains("123ms"), "duration missing: {wide:?}");
 
-        // Only enough room for the highest-priority element: the language.
-        let narrow = render_with_max_width(&ctx, 8);
+        // Enough room for the OS anchor and the runtime version, but not the
+        // lower-priority timing/clock elements.
+        let narrow = render_with_max_width(&ctx, 10);
         assert!(
             narrow.contains("1.74"),
             "language should survive: {narrow:?}"

@@ -1,56 +1,98 @@
+//! Terminal layout primitives: ANSI-aware width measurement, truncation and
+//! shell escape wrapping.
+//!
+//! Every measurement in the prompt funnels through [`visible_width`]. It is the
+//! single source of truth for column accounting, which keeps the left and right
+//! regions aligned even when a path shrinks after `cd`, when a segment contains
+//! Nerd Font glyphs, or when an explicit user override inserts an ANSI sequence.
+//!
+//! The scanner is byte oriented. Escape sequences are pure ASCII, and plain
+//! runs are measured with [`UnicodeWidthStr`] without materialising an
+//! intermediate `String`, so even styled segments avoid the `Vec<char>`
+//! allocation a naive parser would need.
+
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+const ESC: u8 = 0x1b;
+
+/// Byte length of the escape sequence starting at `start`.
+///
+/// `start` must point at an `ESC` byte. Unterminated sequences deliberately
+/// consume the rest of the input so a malformed prompt can never be counted as
+/// visible columns.
+fn escape_len(bytes: &[u8], start: usize) -> usize {
+    debug_assert_eq!(bytes.get(start), Some(&ESC));
+
+    let mut idx = start + 1;
+    if idx >= bytes.len() {
+        return idx - start;
+    }
+
+    match bytes[idx] {
+        // CSI: ESC [ … final-byte(@..~)
+        b'[' => {
+            idx += 1;
+            while idx < bytes.len() {
+                let byte = bytes[idx];
+                idx += 1;
+                if (0x40..=0x7e).contains(&byte) {
+                    break;
+                }
+            }
+        }
+        // OSC: ESC ] … BEL | ST
+        b']' => {
+            idx += 1;
+            while idx < bytes.len() {
+                match bytes[idx] {
+                    0x07 => {
+                        idx += 1;
+                        break;
+                    }
+                    ESC if bytes.get(idx + 1) == Some(&b'\\') => {
+                        idx += 2;
+                        break;
+                    }
+                    _ => idx += 1,
+                }
+            }
+        }
+        // Two-byte escape. Skip the whole UTF-8 scalar after ESC when present.
+        _ => {
+            idx += 1;
+            while idx < bytes.len() && (bytes[idx] & 0b1100_0000) == 0b1000_0000 {
+                idx += 1;
+            }
+        }
+    }
+
+    idx - start
+}
+
 pub fn strip_ansi(input: &str) -> String {
-    if !input.as_bytes().contains(&b'\x1b') {
+    if !input.as_bytes().contains(&ESC) {
         return input.to_string();
     }
 
+    let bytes = input.as_bytes();
     let mut output = String::with_capacity(input.len());
-    let chars: Vec<char> = input.chars().collect();
+    let mut copy_start = 0;
     let mut idx = 0;
 
-    while idx < chars.len() {
-        if chars[idx] == '\u{1b}' {
+    while idx < bytes.len() {
+        if bytes[idx] == ESC {
+            if copy_start < idx {
+                output.push_str(&input[copy_start..idx]);
+            }
+            idx += escape_len(bytes, idx);
+            copy_start = idx;
+        } else {
             idx += 1;
-            if idx >= chars.len() {
-                break;
-            }
-
-            match chars[idx] {
-                '[' => {
-                    idx += 1;
-                    while idx < chars.len() {
-                        let ch = chars[idx];
-                        idx += 1;
-                        if ('@'..='~').contains(&ch) {
-                            break;
-                        }
-                    }
-                }
-                ']' => {
-                    idx += 1;
-                    while idx < chars.len() {
-                        let ch = chars[idx];
-                        idx += 1;
-                        if ch == '\u{7}' {
-                            break;
-                        }
-                        if ch == '\u{1b}' && idx < chars.len() && chars[idx] == '\\' {
-                            idx += 1;
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    idx += 1;
-                }
-            }
-
-            continue;
         }
+    }
 
-        output.push(chars[idx]);
-        idx += 1;
+    if copy_start < bytes.len() {
+        output.push_str(&input[copy_start..]);
     }
 
     output
@@ -71,74 +113,48 @@ fn wrap_ansi_generic(
     escape_percent: bool,
 ) -> String {
     let mut output = String::with_capacity(input.len() + 32);
-    let chars: Vec<char> = input.chars().collect();
+    let bytes = input.as_bytes();
+    let mut plain_start = 0;
     let mut idx = 0;
 
-    while idx < chars.len() {
-        if chars[idx] == '\u{1b}' {
-            let start = idx;
-            idx += 1;
-            if idx >= chars.len() {
-                break;
+    while idx < bytes.len() {
+        if bytes[idx] == ESC {
+            if plain_start < idx {
+                push_plain(&mut output, &input[plain_start..idx], escape_percent);
             }
 
-            match chars[idx] {
-                '[' => {
-                    idx += 1;
-                    while idx < chars.len() {
-                        let ch = chars[idx];
-                        idx += 1;
-                        if ('@'..='~').contains(&ch) {
-                            break;
-                        }
-                    }
+            let len = escape_len(bytes, idx);
+            output.push_str(start_mark);
+            output.push_str(&input[idx..idx + len]);
+            output.push_str(end_mark);
 
-                    let sequence: String = chars[start..idx].iter().collect();
-                    output.push_str(start_mark);
-                    output.push_str(sequence.as_str());
-                    output.push_str(end_mark);
-                    continue;
-                }
-                ']' => {
-                    idx += 1;
-                    while idx < chars.len() {
-                        let ch = chars[idx];
-                        idx += 1;
-                        if ch == '\u{7}' {
-                            break;
-                        }
-                        if ch == '\u{1b}' && idx < chars.len() && chars[idx] == '\\' {
-                            idx += 1;
-                            break;
-                        }
-                    }
-
-                    let sequence: String = chars[start..idx].iter().collect();
-                    output.push_str(start_mark);
-                    output.push_str(sequence.as_str());
-                    output.push_str(end_mark);
-                    continue;
-                }
-                _ => {
-                    let sequence: String = chars[start..idx + 1].iter().collect();
-                    output.push_str(start_mark);
-                    output.push_str(sequence.as_str());
-                    output.push_str(end_mark);
-                    idx += 1;
-                    continue;
-                }
-            }
-        }
-
-        if escape_percent && chars[idx] == '%' {
-            output.push_str("%%");
+            idx += len;
+            plain_start = idx;
         } else {
-            output.push(chars[idx]);
+            idx += 1;
         }
-        idx += 1;
+    }
+
+    if plain_start < bytes.len() {
+        push_plain(&mut output, &input[plain_start..], escape_percent);
     }
 
     output
+}
+
+fn push_plain(output: &mut String, segment: &str, escape_percent: bool) {
+    if !escape_percent {
+        output.push_str(segment);
+        return;
+    }
+
+    for ch in segment.chars() {
+        if ch == '%' {
+            output.push_str("%%");
+        } else {
+            output.push(ch);
+        }
+    }
 }
 
 fn is_zero_width(ch: char) -> bool {
@@ -160,6 +176,7 @@ fn is_zero_width(ch: char) -> bool {
 /// drift by a variable number of columns and corrupt the layout. Combining
 /// marks are already reported as width 0 by `unicode-width`, so this only drops
 /// the "invisible but width-attributed" joiners.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn strip_zero_width(input: &str) -> String {
     if !input.chars().any(is_zero_width) {
         return input.to_string();
@@ -168,20 +185,53 @@ pub fn strip_zero_width(input: &str) -> String {
 }
 
 /// Printable width of `input`, ignoring ANSI escapes *and* zero-width marks.
+///
+/// This is allocation-free when the input contains neither escapes nor
+/// zero-width scalars (the overwhelmingly common path).
 pub fn visible_width(input: &str) -> usize {
-    let has_escape = input.as_bytes().contains(&b'\x1b');
-    let has_zero_width = input.chars().any(is_zero_width);
+    let bytes = input.as_bytes();
+    let has_escape = bytes.contains(&ESC);
 
-    if !has_escape && !has_zero_width {
+    if !has_escape && !input.chars().any(is_zero_width) {
         return UnicodeWidthStr::width(input);
     }
 
-    let stripped = if has_escape {
-        strip_ansi(input)
-    } else {
-        input.to_string()
-    };
-    UnicodeWidthStr::width(strip_zero_width(&stripped).as_str())
+    // Measure contiguous plain-text runs with `UnicodeWidthStr` so contextual
+    // widths (combining marks, emoji presentation) stay correct, while still
+    // dropping zero-width joiners and splitting around escape sequences.
+    let mut width = 0;
+    let mut chunk_start = 0;
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        if bytes[idx] == ESC {
+            if chunk_start < idx {
+                width += UnicodeWidthStr::width(&input[chunk_start..idx]);
+            }
+            idx += escape_len(bytes, idx);
+            chunk_start = idx;
+            continue;
+        }
+
+        let char_start = idx;
+        let Some(ch) = input[idx..].chars().next() else {
+            break;
+        };
+        idx += ch.len_utf8();
+
+        if is_zero_width(ch) {
+            if chunk_start < char_start {
+                width += UnicodeWidthStr::width(&input[chunk_start..char_start]);
+            }
+            chunk_start = idx;
+        }
+    }
+
+    if chunk_start < bytes.len() {
+        width += UnicodeWidthStr::width(&input[chunk_start..]);
+    }
+
+    width
 }
 
 pub fn truncate_plain_to_width(input: &str, max_width: usize) -> String {
@@ -253,6 +303,19 @@ mod tests {
     }
 
     #[test]
+    fn visible_width_handles_osc_sequences_and_unicode() {
+        let title = "\x1b]0;paneship\x07❯ ~/dev";
+        assert_eq!(visible_width(title), visible_width("❯ ~/dev"));
+    }
+
+    #[test]
+    fn visible_width_handles_unterminated_escapes() {
+        // The visible prefix still counts; the dangling sequence does not.
+        assert_eq!(visible_width("path\x1b[31"), 4);
+        assert_eq!(visible_width("\x1b"), 0);
+    }
+
+    #[test]
     fn strip_zero_width_removes_variation_selectors() {
         let with_selector = "\u{2764}\u{fe0f}";
         assert_eq!(strip_zero_width(with_selector), "\u{2764}");
@@ -262,6 +325,17 @@ mod tests {
     fn wrap_ansi_for_zsh_wraps_escape_sequences() {
         let wrapped = wrap_ansi_for_zsh("\x1b[32mhi\x1b[0m");
         assert_eq!(wrapped, "%{\x1b[32m%}hi%{\x1b[0m%}");
+    }
+
+    #[test]
+    fn wrap_ansi_for_bash_wraps_escape_sequences() {
+        let wrapped = wrap_ansi_for_bash("\x1b[32mhi\x1b[0m");
+        assert_eq!(wrapped, "\\[\x1b[32m\\]hi\\[\x1b[0m\\]");
+    }
+
+    #[test]
+    fn wrap_ansi_for_zsh_escapes_literal_percent() {
+        assert_eq!(wrap_ansi_for_zsh("100%"), "100%%");
     }
 
     #[test]

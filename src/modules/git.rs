@@ -1,10 +1,9 @@
 use crate::cache::{GitLookup, GitSnapshot};
-use crate::core::layout::truncate_plain_to_width;
+use crate::core::layout::{truncate_plain_to_width, visible_width};
 use crate::core::prompt::PromptContext;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
-use unicode_width::UnicodeWidthStr;
 
 /// Result of resolving Git state for a render, including fallback states so
 /// the segment never silently disappears.
@@ -42,7 +41,7 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
 
 fn render_placeholder(context: &PromptContext, max_visible_width: usize) -> String {
     let placeholder = context.config.git_placeholder();
-    if UnicodeWidthStr::width(placeholder) > max_visible_width {
+    if visible_width(placeholder) > max_visible_width {
         return String::new();
     }
     format!(
@@ -59,10 +58,10 @@ fn render_snapshot(
     let mut status_tokens = status_tokens(snapshot, context.config.as_ref());
     let branch_icon = context.config.git_branch_icon();
     let icon_with_space = format!("{branch_icon} ");
-    let icon_width = UnicodeWidthStr::width(icon_with_space.as_str());
+    let icon_width = visible_width(icon_with_space.as_str());
     let status_widths = status_tokens
         .iter()
-        .map(|(plain, _)| UnicodeWidthStr::width(plain.as_str()))
+        .map(|(plain, _)| visible_width(plain.as_str()))
         .collect::<Vec<_>>();
     let mut status_total_width = if status_tokens.is_empty() {
         0
@@ -80,7 +79,7 @@ fn render_snapshot(
             .saturating_sub(icon_width + status_width)
             .max(1);
 
-        let branch = if UnicodeWidthStr::width(snapshot.branch.as_str()) > branch_budget {
+        let branch = if visible_width(snapshot.branch.as_str()) > branch_budget {
             truncate_plain_to_width(snapshot.branch.as_str(), branch_budget)
         } else {
             snapshot.branch.clone()
@@ -122,7 +121,7 @@ fn render_snapshot(
         } else {
             status_total_width = status_tokens
                 .iter()
-                .map(|(plain, _)| UnicodeWidthStr::width(plain.as_str()))
+                .map(|(plain, _)| visible_width(plain.as_str()))
                 .sum::<usize>()
                 .saturating_add(status_tokens.len().saturating_sub(1));
         }

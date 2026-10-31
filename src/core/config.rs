@@ -1,4 +1,4 @@
-use crate::core::icons::{IconProfile, ThemeProfile};
+use crate::core::icons::{current_os_key, IconProfile, ThemeProfile};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -21,7 +21,6 @@ pub struct Config {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DirectoryConfig {
-    pub icon: String,
     pub truncation_length: usize,
     pub truncate_to_repo: bool,
 }
@@ -105,8 +104,6 @@ pub struct EnvironmentConfig {
 impl Default for DirectoryConfig {
     fn default() -> Self {
         Self {
-            // Empty icons resolve dynamically from the active icon profile.
-            icon: String::new(),
             truncation_length: 3,
             truncate_to_repo: true,
         }
@@ -214,9 +211,15 @@ impl Config {
         ThemeProfile::parse(&self.theme.name).unwrap_or_default()
     }
 
-    /// Resolved directory icon: explicit value wins, else the active profile.
-    pub fn directory_icon(&self) -> &str {
-        non_empty(&self.directory.icon).unwrap_or_else(|| self.icon_profile().tokens().directory)
+    /// Resolved icon for the host operating system, if the profile defines one.
+    ///
+    /// Rendered only in the right-side telemetry region. It is deliberately
+    /// never used as a directory prefix.
+    pub fn os_icon(&self) -> &str {
+        self.icon_profile()
+            .tokens()
+            .operating_system(current_os_key())
+            .unwrap_or_default()
     }
 
     /// Resolved Git branch icon.
@@ -249,11 +252,6 @@ impl Config {
     /// Resolved failure cursor.
     pub fn failure_icon(&self) -> &str {
         non_empty(&self.status.failure_icon).unwrap_or_else(|| self.icon_profile().tokens().failure)
-    }
-
-    /// Resolved package icon.
-    pub fn package_icon(&self) -> &str {
-        self.icon_profile().tokens().package
     }
 
     /// Resolved infrastructure/environment icon for a detector key.
@@ -332,6 +330,11 @@ impl Config {
             .unwrap_or_else(|| self.theme_profile().colors().paneship)
     }
 
+    /// Resolved OS-identification colour for the right telemetry region.
+    pub fn os_color(&self) -> &str {
+        self.theme_profile().colors().os
+    }
+
     /// Fully resolved style for a language: explicit override wins, else the
     /// active profile supplies the icon and the active theme the colour.
     pub fn language_style(&self, name: &str) -> LanguageStyleConfig {
@@ -387,34 +390,84 @@ mod tests {
     use super::*;
 
     #[test]
-    fn icon_profile_overrides_defaults() {
+    fn icon_profile_resolves_git_and_runtime_glyphs() {
         let mut config = Config::default();
         assert_eq!(
-            config.directory_icon(),
-            IconProfile::NerdFont.tokens().directory
+            config.git_branch_icon(),
+            IconProfile::NerdFont.tokens().git_branch
         );
 
         config.icons.profile = "emoji".to_string();
         assert_eq!(
-            config.directory_icon(),
-            IconProfile::Emoji.tokens().directory
-        );
-        assert_eq!(
             config.git_branch_icon(),
             IconProfile::Emoji.tokens().git_branch
         );
+        assert_eq!(
+            config.language_style("rust").icon,
+            IconProfile::Emoji.tokens().language("rust").unwrap()
+        );
 
         config.icons.profile = "minimal".to_string();
-        assert_eq!(config.directory_icon(), "dir:");
-        assert!(config.directory_icon().is_ascii());
+        assert!(config.git_branch_icon().is_ascii());
+        assert!(config.language_style("rust").icon.is_ascii());
     }
 
     #[test]
-    fn explicit_icon_wins_over_profile() {
-        let mut config = Config::default();
-        config.icons.profile = "minimal".to_string();
-        config.directory.icon = "CUSTOM".to_string();
-        assert_eq!(config.directory_icon(), "CUSTOM");
+    fn legacy_directory_icon_key_is_ignored_without_breaking_the_config() {
+        // Older configs may still contain `[directory] icon = "@"`. The key is
+        // no longer part of the schema: the path is pure text, so it must be
+        // ignored rather than resurfacing as a left-prompt prefix.
+        let config: Config = toml::from_str(
+            r#"
+            [directory]
+            icon = "@"
+            truncation_length = 2
+            "#,
+        )
+        .expect("legacy config must still parse");
+
+        assert_eq!(config.directory.truncation_length, 2);
+        assert!(config.directory.truncate_to_repo);
+    }
+
+    #[test]
+    fn default_icon_profile_contains_no_emoji() {
+        let config = Config::default();
+        assert_eq!(config.icon_profile(), IconProfile::NerdFont);
+        for key in ["rust", "node", "go"] {
+            let icon = config.language_style(key).icon;
+            assert!(
+                icon.chars().all(|ch| !is_emoji(ch)),
+                "default language icon for {key} is an emoji: {icon:?}"
+            );
+        }
+        for key in ["macos", "linux", "windows"] {
+            let icon = config
+                .icon_profile()
+                .tokens()
+                .operating_system(key)
+                .unwrap();
+            assert!(
+                icon.chars().all(|ch| !is_emoji(ch)),
+                "default OS icon for {key} is an emoji: {icon:?}"
+            );
+        }
+        assert_eq!(config.success_icon(), "\u{276f}");
+    }
+
+    fn is_emoji(ch: char) -> bool {
+        matches!(ch as u32, 0x1f000..=0x1faff)
+    }
+
+    #[test]
+    fn os_icon_is_platform_specific() {
+        let config = Config::default();
+        let expected = IconProfile::NerdFont
+            .tokens()
+            .operating_system(current_os_key())
+            .unwrap_or_default();
+        assert_eq!(config.os_icon(), expected);
+        assert!(!config.os_icon().is_empty());
     }
 
     #[test]

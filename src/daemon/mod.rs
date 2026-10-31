@@ -17,7 +17,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod log;
@@ -118,6 +118,28 @@ struct DaemonState {
     known_repos: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
+/// Identity of the executable the daemon was started from.
+///
+/// Shell integration only spawns a daemon when `daemon ping` fails, so a daemon
+/// keeps serving after the binary on disk is upgraded. Recording the startup
+/// identity lets the stale process retire itself; the next prompt then starts
+/// the upgraded daemon. Without this, an upgrade could keep rendering with
+/// outdated logic (for example the wrong host OS icon) until logout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BinaryFingerprint {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+fn binary_fingerprint() -> Option<BinaryFingerprint> {
+    let path = std::env::current_exe().ok()?;
+    let metadata = std::fs::metadata(path).ok()?;
+    Some(BinaryFingerprint {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+    })
+}
+
 /// Run the daemon to completion (blocks until the listener fails).
 pub fn run() -> io::Result<()> {
     std::env::set_var("PANESHIP_DAEMON", "1");
@@ -155,23 +177,44 @@ async fn async_main() -> io::Result<()> {
     let mut listener = ipc::bind_default()?;
     log::info(format!("daemon listening on {}", ipc::endpoint_display()));
 
+    let startup_binary = binary_fingerprint();
+    // Check periodically rather than only when a client connects: an idle
+    // daemon should retire as soon as its binary is replaced, so the next
+    // prompt's `ping` fails and the shell starts the upgraded daemon.
+    let mut retire_check = tokio::time::interval(Duration::from_secs(2));
+    retire_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     loop {
-        match listener.accept().await {
-            Ok(stream) => {
-                let state = state.clone();
-                tokio::spawn(async move {
-                    let _guard = telemetry::ConnectionGuard::new();
-                    if let Err(err) = handle_client(stream, state).await {
-                        log::warn(format!("client handler error: {err}"));
-                    }
-                });
+        tokio::select! {
+            _ = retire_check.tick() => {
+                // The shell only starts a daemon when `ping` fails, so a daemon
+                // whose executable was replaced (for example by `cargo
+                // install`) must exit instead of rendering stale output until
+                // the user logs out.
+                if startup_binary.is_some_and(|startup| binary_fingerprint() != Some(startup)) {
+                    log::info("executable changed on disk; exiting for an upgraded daemon");
+                    break;
+                }
             }
-            Err(err) => {
-                log::warn(format!("accept error: {err}"));
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+            accepted = listener.accept() => match accepted {
+                Ok(stream) => {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        let _guard = telemetry::ConnectionGuard::new();
+                        if let Err(err) = handle_client(stream, state).await {
+                            log::warn(format!("client handler error: {err}"));
+                        }
+                    });
+                }
+                Err(err) => {
+                    log::warn(format!("accept error: {err}"));
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            },
         }
     }
+
+    Ok(())
 }
 
 fn spawn_worker(rx: mpsc::Receiver<WorkerMessage>, updating: UpdatingSet) {
@@ -651,6 +694,26 @@ mod tests {
         let mut cursor = std::io::Cursor::new(frame);
         let decoded: Request = read_sync(&mut cursor).unwrap();
         assert!(matches!(decoded, Request::Ping));
+    }
+
+    #[test]
+    fn binary_fingerprint_observes_the_running_executable() {
+        let fingerprint = binary_fingerprint().expect("the test executable should be readable");
+        assert!(fingerprint.len > 0);
+        assert!(fingerprint.modified.is_some());
+    }
+
+    #[test]
+    fn binary_fingerprint_distinguishes_replacements() {
+        let started = BinaryFingerprint {
+            modified: None,
+            len: 1,
+        };
+        let replaced = BinaryFingerprint {
+            modified: None,
+            len: 2,
+        };
+        assert_ne!(Some(started), Some(replaced));
     }
 
     #[test]

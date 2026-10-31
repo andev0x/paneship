@@ -144,3 +144,71 @@ fn daemon_heals_stale_socket_and_serves_clients() {
     let _ = daemon.wait();
     let _ = std::fs::remove_dir_all(&runtime_dir);
 }
+
+#[test]
+fn daemon_retires_when_its_executable_is_replaced() {
+    let runtime_dir = unique_runtime_dir();
+    // Run a copy so this test can replace the executable without disturbing the
+    // build artifact other tests use.
+    let binary = runtime_dir.join("paneship-under-test");
+    std::fs::copy(paneship(), &binary).unwrap();
+
+    let mut daemon = Command::new(&binary)
+        .arg("daemon")
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn daemon");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut ready = false;
+    while Instant::now() < deadline {
+        if run_with_runtime(&["daemon", "ping"], &runtime_dir) {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !ready {
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+        let _ = std::fs::remove_dir_all(&runtime_dir);
+        panic!("daemon did not become ready within the timeout");
+    }
+
+    // Replace the executable by rename: writing over a running binary fails
+    // with ETXTBSY on Unix. Appending a byte changes the fingerprint.
+    let staging = runtime_dir.join("paneship-staging");
+    std::fs::copy(&binary, &staging).unwrap();
+    {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&staging)
+            .unwrap();
+        file.write_all(b"\0").unwrap();
+    }
+    std::fs::rename(&staging, &binary).unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut retired = false;
+    while Instant::now() < deadline {
+        if daemon.try_wait().unwrap().is_some() {
+            retired = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    if !retired {
+        let _ = daemon.kill();
+    }
+    let _ = daemon.wait();
+
+    let _ = std::fs::remove_dir_all(&runtime_dir);
+    assert!(
+        retired,
+        "daemon should exit after its executable is replaced"
+    );
+}

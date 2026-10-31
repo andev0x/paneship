@@ -96,21 +96,39 @@ pub struct MarkerMatch {
 ///
 /// This is the cheap probe used on the hot render path: it performs only
 /// directory-entry existence checks and never parses a manifest.
+///
+/// The walk stops at the user's home directory and ignores markers *inside*
+/// home. Global installs commonly leave stray manifests such as
+/// `~/package.json`, and inheriting one would label every unrelated folder
+/// below home with a language icon it does not own.
 pub fn find_marker(cwd: &Path) -> Option<MarkerMatch> {
+    find_marker_until(cwd, home_dir().as_deref())
+}
+
+fn find_marker_until(cwd: &Path, home: Option<&Path>) -> Option<MarkerMatch> {
     for dir in cwd.ancestors() {
-        for (detector_index, detector) in registry().iter().enumerate() {
-            if let Some(marker) = detector.marker_in(dir) {
-                return Some(MarkerMatch {
-                    detector_index,
-                    marker,
-                });
+        let is_home = home == Some(dir);
+        if !is_home {
+            for (detector_index, detector) in registry().iter().enumerate() {
+                if let Some(marker) = detector.marker_in(dir) {
+                    return Some(MarkerMatch {
+                        detector_index,
+                        marker,
+                    });
+                }
             }
         }
-        if is_boundary(dir) {
+        if is_home || is_boundary(dir) {
             break;
         }
     }
     None
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 /// Fully resolve runtime metadata for `cwd` using the registry.
@@ -196,6 +214,49 @@ mod tests {
         assert_eq!(matched.marker, root.join("package.json"));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn home_markers_do_not_label_child_directories() {
+        let home = temp_dir("home-boundary");
+        fs::write(home.join("package.json"), "{}").unwrap();
+
+        assert!(
+            find_marker_until(&home, Some(&home)).is_none(),
+            "a stray manifest in home must not claim home itself"
+        );
+
+        let child = home.join("notes");
+        fs::create_dir_all(&child).unwrap();
+        assert!(
+            find_marker_until(&child, Some(&home)).is_none(),
+            "home markers must not leak into unrelated child folders"
+        );
+
+        let other = home.join("Downloads").join("archive");
+        fs::create_dir_all(&other).unwrap();
+        assert!(
+            find_marker_until(&other, Some(&home)).is_none(),
+            "deeper folders under home must not inherit home markers either"
+        );
+
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn project_marker_below_home_is_still_detected() {
+        let home = temp_dir("home-project");
+        fs::write(home.join("package.json"), "{}").unwrap();
+        let project = home.join("workspace").join("app");
+        let nested = project.join("src");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(project.join("Cargo.toml"), "[package]\nname = \"app\"\n").unwrap();
+
+        let matched = find_marker_until(&nested, Some(&home)).expect("marker should be found");
+        assert_eq!(registry()[matched.detector_index].name(), "rust");
+        assert_eq!(matched.marker, project.join("Cargo.toml"));
+
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

@@ -1,41 +1,52 @@
 name: CI
 
+# Continuous integration only. Every job runs on GitHub-hosted Ubuntu runners,
+# which are free for public repositories; no macOS/Windows runners are used and
+# no cross-compilation happens on pull requests.
 on:
   push:
     branches: [main, master]
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
 
 jobs:
   quality:
-    name: Quality (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+    name: Quality (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - name: Cache cargo registry
+      - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-linux
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
+
+      - name: Check
+        run: cargo check --all-targets --locked
 
       - name: Lint (all targets, warnings denied)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-targets
-
-      - name: Build release
-        run: cargo build --release --locked
+        run: cargo test --all-targets --locked

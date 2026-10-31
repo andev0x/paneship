@@ -1,4 +1,4 @@
-//! Package-version segment (e.g. `📦 v1.1.6` for Cargo projects).
+//! Package-version segment (e.g. `v1.1.6` for Cargo projects).
 //!
 //! Like the language segment, the daemon resolves this off the render path and
 //! serves cached/stale data while a worker recomputes.
@@ -21,7 +21,8 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
         },
     };
 
-    let plain = format!("{} v{version}", context.config.package_icon());
+    // Left-pipeline context is plain text: the version carries no package glyph.
+    let plain = format!("v{version}");
     if crate::core::layout::visible_width(plain.as_str()) > max_visible_width {
         return String::new();
     }
@@ -175,6 +176,11 @@ mod tests {
             environment_state: None,
         };
         let rendered = render_with_max_width(&context, 120);
+        let plain = crate::core::layout::strip_ansi(&rendered);
+        assert!(
+            plain.starts_with('v'),
+            "package version must be plain text: {plain:?}"
+        );
         assert!(rendered.contains("1.2.3"), "missing version: {rendered:?}");
     }
 }

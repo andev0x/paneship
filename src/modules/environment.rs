@@ -7,7 +7,6 @@
 
 use crate::core::prompt::{MetadataState, PromptContext};
 use crate::detectors::infra::EnvironmentInfo;
-use unicode_width::UnicodeWidthStr;
 
 pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) -> String {
     if max_visible_width == 0 {
@@ -26,7 +25,7 @@ pub fn render_with_max_width(context: &PromptContext, max_visible_width: usize) 
     }
 
     let separator = "  ";
-    let separator_width = UnicodeWidthStr::width(separator);
+    let separator_width = crate::core::layout::visible_width(separator);
     let mut selected: Vec<String> = Vec::new();
     let mut used = 0usize;
 
